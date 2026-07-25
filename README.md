@@ -84,7 +84,7 @@ sudo systemctl enable --now bifrost
 sudo /usr/local/bin/bifrost check --config /etc/bifrost/config.yaml
 ```
 
-Read the [installation guide](https://sirrobot01.github.io/bifrost/getting-started/installation/) for release verification, secret creation, container use, and upgrades. The [configuration guide](https://sirrobot01.github.io/bifrost/guides/configuration/) describes all fields.
+Read the [installation guide](https://bifrost.biodun.dev/getting-started/installation/) for release verification, secret creation, container use, and upgrades. The [configuration guide](https://bifrost.biodun.dev/guides/configuration/) describes all fields.
 
 ## Docker discovery
 
@@ -112,7 +112,7 @@ The edge reads an allowed TLS SNI name and connects to the home AAAA address. It
 
 The home listener verifies edge metadata with a shared key. This metadata can preserve the original IPv4 address only when the final backend accepts PROXY protocol v2.
 
-See the [edge guide](https://sirrobot01.github.io/bifrost/networking/edge/) before you enable this role.
+See the [edge guide](https://bifrost.biodun.dev/networking/edge/) before you enable this role.
 
 ## Operations
 
@@ -132,7 +132,7 @@ Bifrost supports TCP in v1. It does not end TLS, issue certificates, authenticat
 
 Use an HTTP CDN proxy or a tunnel when it meets the requirements. Use Bifrost when a direct IPv6 path or a non-HTTP, high-bandwidth service must avoid a full-time relay.
 
-Read the [documentation](https://sirrobot01.github.io/bifrost/) and the [security policy](SECURITY.md).
+Read the [documentation](https://bifrost.biodun.dev/) and the [security policy](SECURITY.md).
 
 ## Development
 

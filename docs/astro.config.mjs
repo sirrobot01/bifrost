@@ -2,8 +2,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  site: 'https://sirrobot01.github.io',
-  base: '/bifrost',
+  site: 'https://bifrost.biodun.dev',
   integrations: [
     starlight({
       title: 'Bifrost',
