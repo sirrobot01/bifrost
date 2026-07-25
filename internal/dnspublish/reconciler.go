@@ -100,7 +100,7 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 		}
 
 		primary := matching[0]
-		if primary.TTL != ttl || primary.Proxied {
+		if (primary.TTL != 0 && primary.TTL != ttl) || primary.Proxied {
 			primary.TTL = ttl
 			primary.Proxied = false
 			if err := r.provider.Update(ctx, primary); err != nil {
@@ -123,6 +123,40 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 		}
 	}
 
+	return nil
+}
+
+func (r *Reconciler) Prune(ctx context.Context, desiredNames []string) error {
+	desired := make(map[string]struct{}, len(desiredNames))
+	for _, name := range desiredNames {
+		normalized, err := normalizeName(name)
+		if err != nil {
+			return err
+		}
+		desired[normalized] = struct{}{}
+	}
+	markers, err := r.provider.ListZone(ctx, RecordTXT)
+	if err != nil {
+		return fmt.Errorf("list DNS ownership records: %w", err)
+	}
+	ownedContent := ownershipPrefix + r.ownerID
+	pruned := make(map[string]struct{})
+	for _, marker := range markers {
+		if strings.Trim(marker.Content, "\"") != ownedContent || !strings.HasPrefix(marker.Name, "_bifrost.") {
+			continue
+		}
+		name := strings.TrimPrefix(marker.Name, "_bifrost.")
+		if _, keep := desired[name]; keep {
+			continue
+		}
+		if _, alreadyPruned := pruned[name]; alreadyPruned {
+			continue
+		}
+		if err := r.Withdraw(ctx, name); err != nil {
+			return fmt.Errorf("prune DNS publication %s: %w", name, err)
+		}
+		pruned[name] = struct{}{}
+	}
 	return nil
 }
 

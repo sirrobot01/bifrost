@@ -26,6 +26,7 @@ type AddressManager interface {
 type Publisher interface {
 	Ensure(context.Context, dnspublish.Publication) error
 	Withdraw(context.Context, string) error
+	Prune(context.Context, []string) error
 }
 
 type Splicer interface {
@@ -118,6 +119,7 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	defer c.mu.Unlock()
 
 	indexed := make(map[string]Service, len(desired))
+	desiredDNSNames := make([]string, 0, len(desired))
 	for _, service := range desired {
 		if err := service.validate(); err != nil {
 			return nil, fmt.Errorf("service %q: %w", service.ID, err)
@@ -126,6 +128,12 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 			return nil, fmt.Errorf("duplicate service %q", service.ID)
 		}
 		indexed[service.ID] = service
+		desiredDNSNames = append(desiredDNSNames, service.DNSName)
+	}
+	if !dryRun {
+		if err := c.config.Publisher.Prune(ctx, desiredDNSNames); err != nil {
+			return nil, err
+		}
 	}
 
 	selection, selectionErr := c.selectPrefix(snapshot)

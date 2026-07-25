@@ -26,6 +26,16 @@ func (p *memoryProvider) List(_ context.Context, name string, recordType RecordT
 	return records, nil
 }
 
+func (p *memoryProvider) ListZone(_ context.Context, recordType RecordType) ([]Record, error) {
+	var records []Record
+	for _, record := range p.records {
+		if record.Type == recordType {
+			records = append(records, record)
+		}
+	}
+	return records, nil
+}
+
 func (p *memoryProvider) Create(_ context.Context, record Record) (Record, error) {
 	p.nextID++
 	record.ID = fmt.Sprintf("record-%d", p.nextID)
@@ -184,5 +194,29 @@ func TestReconcilerWithdrawDeletesMarkerLast(t *testing.T) {
 	want := []string{"delete:address-1", "delete:address-2", "delete:owner"}
 	if !slices.Equal(provider.events, want) {
 		t.Fatalf("events = %v, want %v", provider.events, want)
+	}
+}
+
+func TestReconcilerPrunesOnlyOwnedOrphans(t *testing.T) {
+	t.Parallel()
+
+	provider := &memoryProvider{records: []Record{
+		{ID: "kept-owner", Type: RecordTXT, Name: "_bifrost.keep.example.com", Content: "bifrost-owner=host-1", TTL: 60},
+		{ID: "kept-address", Type: RecordAAAA, Name: "keep.example.com", Content: "2001:db8::1", TTL: 60},
+		{ID: "orphan-owner", Type: RecordTXT, Name: "_bifrost.orphan.example.com", Content: "bifrost-owner=host-1", TTL: 60},
+		{ID: "orphan-address", Type: RecordAAAA, Name: "orphan.example.com", Content: "2001:db8::2", TTL: 60},
+		{ID: "other-owner", Type: RecordTXT, Name: "_bifrost.other.example.com", Content: "bifrost-owner=another-host", TTL: 60},
+		{ID: "other-address", Type: RecordAAAA, Name: "other.example.com", Content: "2001:db8::3", TTL: 60},
+	}}
+	reconciler, err := NewReconciler(provider, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconciler.Prune(t.Context(), []string{"keep.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := provider.events, []string{"delete:orphan-address", "delete:orphan-owner"}; !slices.Equal(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
 	}
 }

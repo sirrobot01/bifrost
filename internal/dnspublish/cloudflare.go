@@ -64,10 +64,18 @@ func NewCloudflare(config CloudflareConfig) (*Cloudflare, error) {
 // List returns records of recordType with the exact name.
 func (c *Cloudflare) List(ctx context.Context, name string, recordType RecordType) ([]Record, error) {
 	query := url.Values{
-		"name":     {name},
 		"type":     {string(recordType)},
 		"per_page": {"100"},
 	}
+	query.Set("name", name)
+	return c.list(ctx, query)
+}
+
+func (c *Cloudflare) ListZone(ctx context.Context, recordType RecordType) ([]Record, error) {
+	return c.list(ctx, url.Values{"type": {string(recordType)}, "per_page": {"5000000"}})
+}
+
+func (c *Cloudflare) list(ctx context.Context, query url.Values) ([]Record, error) {
 	var response cloudflareResponse[[]cloudflareRecord]
 	if err := c.request(ctx, http.MethodGet, c.recordsPath(), query, nil, &response); err != nil {
 		return nil, err

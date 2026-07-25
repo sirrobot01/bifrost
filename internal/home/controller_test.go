@@ -53,6 +53,10 @@ func (p *fakePublisher) Withdraw(_ context.Context, name string) error {
 	return nil
 }
 
+func (p *fakePublisher) Prune(context.Context, []string) error {
+	return nil
+}
+
 type fakeSplicer struct {
 	address  netip.AddrPort
 	shutdown int

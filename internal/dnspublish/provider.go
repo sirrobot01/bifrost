@@ -23,6 +23,7 @@ type Record struct {
 // Provider performs primitive DNS record operations.
 type Provider interface {
 	List(context.Context, string, RecordType) ([]Record, error)
+	ListZone(context.Context, RecordType) ([]Record, error)
 	Create(context.Context, Record) (Record, error)
 	Update(context.Context, Record) error
 	Delete(context.Context, string) error
