@@ -61,31 +61,56 @@ func NewCloudflare(config CloudflareConfig) (*Cloudflare, error) {
 	}, nil
 }
 
+// cloudflarePageSize is the page size requested when listing records. The API
+// reference documents no ceiling for per_page and reported limits differ between
+// versions, so this stays at the documented default that every version accepts.
+// Walking pages, not enlarging them, is what makes a large zone list correctly.
+const cloudflarePageSize = 100
+
+// cloudflareMaxPages bounds a listing walk so a provider that keeps answering
+// with full pages cannot spin forever.
+const cloudflareMaxPages = 1000
+
 // List returns records of recordType with the exact name.
 func (c *Cloudflare) List(ctx context.Context, name string, recordType RecordType) ([]Record, error) {
-	query := url.Values{
-		"type":     {string(recordType)},
-		"per_page": {"100"},
-	}
+	query := url.Values{"type": {string(recordType)}}
 	query.Set("name", name)
 	return c.list(ctx, query)
 }
 
 func (c *Cloudflare) ListZone(ctx context.Context, recordType RecordType) ([]Record, error) {
-	return c.list(ctx, url.Values{"type": {string(recordType)}, "per_page": {"5000000"}})
+	return c.list(ctx, url.Values{"type": {string(recordType)}})
 }
 
+// list walks every page of a record query. Reading only the first page would
+// truncate the result silently, which leaves Prune blind to ownership markers
+// beyond the first page and strands the records they cover.
 func (c *Cloudflare) list(ctx context.Context, query url.Values) ([]Record, error) {
-	var response cloudflareResponse[[]cloudflareRecord]
-	if err := c.request(ctx, http.MethodGet, c.recordsPath(), query, nil, &response); err != nil {
-		return nil, err
+	query.Set("per_page", strconv.Itoa(cloudflarePageSize))
+	records := make([]Record, 0, cloudflarePageSize)
+	for page := 1; page <= cloudflareMaxPages; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var response cloudflareResponse[[]cloudflareRecord]
+		if err := c.request(ctx, http.MethodGet, c.recordsPath(), query, nil, &response); err != nil {
+			return nil, err
+		}
+		for _, record := range response.Result {
+			records = append(records, record.providerRecord())
+		}
+		// Every result_info field is optional, so a short page is the primary
+		// signal that the walk is done and the reported totals are consulted
+		// only when the provider actually sends them.
+		if len(response.Result) < cloudflarePageSize {
+			return records, nil
+		}
+		if response.ResultInfo.TotalPages > 0 && page >= response.ResultInfo.TotalPages {
+			return records, nil
+		}
+		if response.ResultInfo.TotalCount > 0 && len(records) >= response.ResultInfo.TotalCount {
+			return records, nil
+		}
 	}
-
-	records := make([]Record, 0, len(response.Result))
-	for _, record := range response.Result {
-		records = append(records, record.providerRecord())
-	}
-	return records, nil
+	return nil, fmt.Errorf("Cloudflare record listing exceeded %d pages", cloudflareMaxPages)
 }
 
 // Create adds a DNS record.
@@ -135,9 +160,20 @@ func cloudflareRecordFromProvider(record Record) cloudflareRecord {
 }
 
 type cloudflareResponse[T any] struct {
-	Success bool              `json:"success"`
-	Errors  []cloudflareError `json:"errors"`
-	Result  T                 `json:"result"`
+	Success    bool                 `json:"success"`
+	Errors     []cloudflareError    `json:"errors"`
+	Result     T                    `json:"result"`
+	ResultInfo cloudflareResultInfo `json:"result_info"`
+}
+
+// cloudflareResultInfo carries pagination totals. Every field is optional in the
+// API reference, so a zero value means the provider did not report it.
+type cloudflareResultInfo struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	Count      int `json:"count"`
+	TotalCount int `json:"total_count"`
+	TotalPages int `json:"total_pages"`
 }
 
 type cloudflareError struct {
