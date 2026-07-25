@@ -34,7 +34,7 @@ func (d Deriver) Address(prefix netip.Prefix, serviceID string, dadCounter uint3
 	if serviceID == "" {
 		return netip.Addr{}, errors.New("service ID is required")
 	}
-	if !prefix.IsValid() || !prefix.Addr().Is6() || prefix.Bits() != 64 {
+	if !prefix.IsValid() || !prefix.Addr().Is6() || prefix.Addr().Is4In6() || prefix.Bits() != 64 {
 		return netip.Addr{}, errors.New("service address prefix must be an IPv6 /64")
 	}
 

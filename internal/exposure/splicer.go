@@ -173,7 +173,7 @@ func (c Config) validate() error {
 	if c.ServiceID == "" {
 		return errors.New("service ID is required")
 	}
-	if !c.ListenAddress.IsValid() || !c.ListenAddress.Addr().Is6() || c.ListenAddress.Addr().IsUnspecified() {
+	if !c.ListenAddress.IsValid() || !c.ListenAddress.Addr().Is6() || c.ListenAddress.Addr().Is4In6() || c.ListenAddress.Addr().IsUnspecified() {
 		return errors.New("listen address must be a specific IPv6 address")
 	}
 	if !c.BackendAddress.IsValid() || c.BackendAddress.Port() == 0 {

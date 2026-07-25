@@ -34,7 +34,7 @@ func (s Service) Validate() error {
 	if s.Mode != ModeDirect && s.Mode != ModeSplice {
 		return errors.New("service mode must be direct or splice")
 	}
-	if !s.PublicAddress.IsValid() || !s.PublicAddress.Is6() || !s.PublicAddress.IsGlobalUnicast() || s.PublicAddress.IsPrivate() {
+	if !s.PublicAddress.IsValid() || !s.PublicAddress.Is6() || s.PublicAddress.Is4In6() || !s.PublicAddress.IsGlobalUnicast() || s.PublicAddress.IsPrivate() {
 		return errors.New("service public address must be a public IPv6 address")
 	}
 	if s.ListenPort == 0 {
