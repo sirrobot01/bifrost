@@ -23,12 +23,28 @@ type Metadata struct {
 	Destination netip.AddrPort
 }
 
+// nonceGenerations is the number of buckets the replay cache rotates through.
+// A nonce survives every generation but the one it was written into, so sizing
+// the rotation window at 2*skew/(nonceGenerations-1) retains it for at least
+// 2*skew: the widest span over which a single timestamp stays acceptable, and
+// therefore the longest a nonce can still be replayed.
+const nonceGenerations = 8
+
+// maxTrackedNonces bounds replay cache memory. Verification fails closed once it
+// is reached, because evicting a nonce early would silently drop replay
+// protection, which is a worse outcome than refusing headers during a flood.
+const maxTrackedNonces = 1 << 18
+
 type Verifier struct {
-	key    []byte
-	skew   time.Duration
-	now    func() time.Time
-	mu     sync.Mutex
-	nonces map[[16]byte]time.Time
+	key         []byte
+	skew        time.Duration
+	window      time.Duration
+	now         func() time.Time
+	mu          sync.Mutex
+	generations [nonceGenerations]map[[16]byte]struct{}
+	current     int
+	tracked     int
+	rotatedAt   time.Time
 }
 
 func NewVerifier(key []byte, skew time.Duration) (*Verifier, error) {
@@ -38,7 +54,11 @@ func NewVerifier(key []byte, skew time.Duration) (*Verifier, error) {
 	if skew <= 0 {
 		return nil, errors.New("edge authentication clock skew must be positive")
 	}
-	return &Verifier{key: append([]byte(nil), key...), skew: skew, now: time.Now, nonces: make(map[[16]byte]time.Time)}, nil
+	window := 2 * skew / (nonceGenerations - 1)
+	if window <= 0 {
+		window = time.Nanosecond
+	}
+	return &Verifier{key: append([]byte(nil), key...), skew: skew, window: window, now: time.Now}, nil
 }
 
 func Build(key []byte, serviceID string, source, destination netip.AddrPort, now time.Time) ([]byte, error) {
@@ -90,16 +110,16 @@ func (v *Verifier) Verify(serviceID string, header []byte) (Metadata, error) {
 	var nonce [16]byte
 	copy(nonce[:], header[39:55])
 	v.mu.Lock()
-	for existing, expires := range v.nonces {
-		if !now.Before(expires) {
-			delete(v.nonces, existing)
-		}
-	}
-	if _, replayed := v.nonces[nonce]; replayed {
+	v.rotate(now)
+	if v.seen(nonce) {
 		v.mu.Unlock()
 		return Metadata{}, errors.New("authenticated PROXY v2 nonce was replayed")
 	}
-	v.nonces[nonce] = timestamp.Add(v.skew)
+	if v.tracked >= maxTrackedNonces {
+		v.mu.Unlock()
+		return Metadata{}, errors.New("authenticated PROXY v2 replay cache is full")
+	}
+	v.remember(nonce)
 	v.mu.Unlock()
 
 	sourceAddress := [4]byte(header[16:20])
@@ -108,6 +128,55 @@ func (v *Verifier) Verify(serviceID string, header []byte) (Metadata, error) {
 		Source:      netip.AddrPortFrom(netip.AddrFrom4(sourceAddress), binary.BigEndian.Uint16(header[24:26])),
 		Destination: netip.AddrPortFrom(netip.AddrFrom4(destinationAddress), binary.BigEndian.Uint16(header[26:28])),
 	}, nil
+}
+
+// rotate advances the generation ring so that expiry discards whole generations
+// at once. It replaces a per-entry sweep, keeping verification constant time
+// however many nonces are being tracked. Callers must hold v.mu.
+func (v *Verifier) rotate(now time.Time) {
+	if v.rotatedAt.IsZero() {
+		v.rotatedAt = now
+		return
+	}
+	elapsed := now.Sub(v.rotatedAt)
+	if elapsed < v.window {
+		return
+	}
+	steps := int(elapsed / v.window)
+	if steps >= nonceGenerations {
+		// The ring has turned over completely, so every tracked nonce has aged
+		// out of the window in which it could still be replayed.
+		v.generations = [nonceGenerations]map[[16]byte]struct{}{}
+		v.current = 0
+		v.tracked = 0
+		v.rotatedAt = now
+		return
+	}
+	for range steps {
+		v.current = (v.current + 1) % nonceGenerations
+		v.tracked -= len(v.generations[v.current])
+		v.generations[v.current] = nil
+	}
+	v.rotatedAt = v.rotatedAt.Add(time.Duration(steps) * v.window)
+}
+
+// seen reports whether nonce is held in any live generation. Callers must hold v.mu.
+func (v *Verifier) seen(nonce [16]byte) bool {
+	for _, generation := range v.generations {
+		if _, exists := generation[nonce]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+// remember records nonce in the current generation. Callers must hold v.mu.
+func (v *Verifier) remember(nonce [16]byte) {
+	if v.generations[v.current] == nil {
+		v.generations[v.current] = make(map[[16]byte]struct{})
+	}
+	v.generations[v.current][nonce] = struct{}{}
+	v.tracked++
 }
 
 func HasSignature(header []byte) bool {
