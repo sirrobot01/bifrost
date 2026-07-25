@@ -147,18 +147,40 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, listenerRoute
 			}
 			return err
 		}
-		go s.handle(ctx, connection, listenerRoute)
+		if !s.admitConnection(connection) {
+			_ = connection.Close()
+			continue
+		}
+		go func() {
+			defer s.global.Release()
+			s.handle(ctx, connection, listenerRoute)
+		}()
 	}
+}
+
+// admitConnection applies the global and per-source limits on the accept path,
+// before a connection is given a goroutine. Shedding here rather than inside the
+// handler keeps a flood from scheduling the very work needed to turn it away.
+// The caller owns a global slot once this reports true and must release it.
+func (s *Server) admitConnection(client net.Conn) bool {
+	remote, ok := client.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	if !s.global.Acquire() {
+		return false
+	}
+	if !s.rate.Allow(remote.AddrPort().Addr()) {
+		s.global.Release()
+		return false
+	}
+	return true
 }
 
 func (s *Server) handle(ctx context.Context, client net.Conn, listenerRoute route) {
 	defer func() { _ = client.Close() }()
-	if !s.global.Acquire() {
-		return
-	}
-	defer s.global.Release()
 	remote, ok := client.RemoteAddr().(*net.TCPAddr)
-	if !ok || !s.rate.Allow(remote.AddrPort().Addr()) {
+	if !ok {
 		return
 	}
 
