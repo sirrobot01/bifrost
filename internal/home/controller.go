@@ -52,6 +52,9 @@ type ServiceStatus struct {
 	Backend           netip.AddrPort `json:"backend"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
 	ActiveConnections int64          `json:"active_connections"`
+	Accepted          uint64         `json:"accepted_total"`
+	Rejected          uint64         `json:"rejected_total"`
+	DialFailures      uint64         `json:"dial_failures_total"`
 }
 
 type ControllerConfig struct {
@@ -67,6 +70,7 @@ type ControllerConfig struct {
 	Now            func() time.Time
 	CheckDirect    func(context.Context, netip.AddrPort) error
 	PrefixOverride netip.Prefix
+	GlobalLimiter  *exposure.Limiter
 }
 
 type Controller struct {
@@ -231,7 +235,12 @@ func (c *Controller) Status() []ServiceStatus {
 		for _, endpoint := range state.endpoints {
 			status.Addresses = append(status.Addresses, endpoint.address)
 			if endpoint.splicer != nil {
-				status.ActiveConnections += endpoint.splicer.Status().ActiveConnections
+				spliceStatus := endpoint.splicer.Status()
+				status.ActiveConnections += spliceStatus.ActiveConnections
+				status.Accepted += spliceStatus.Accepted
+				status.Rejected += spliceStatus.Rejected
+				status.DialFailures += spliceStatus.DialFailures
+				status.ClientIPPreserved = spliceStatus.ClientIPPreserved
 			}
 		}
 		statuses = append(statuses, status)
@@ -338,6 +347,8 @@ func (c *Controller) prepareEndpoint(ctx context.Context, service Service, mode 
 		MaxConnections: service.MaxConnections,
 		DialTimeout:    c.config.DialTimeout,
 		IdleTimeout:    c.config.IdleTimeout,
+		ProxyProtocol:  service.ProxyProtocol,
+		GlobalLimiter:  c.config.GlobalLimiter,
 		Logger:         c.config.Logger,
 	})
 	if err != nil {

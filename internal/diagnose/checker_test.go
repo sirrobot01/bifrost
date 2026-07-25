@@ -35,7 +35,7 @@ func TestServiceFindingsIdentifyPMTUBlackhole(t *testing.T) {
 		result: ProbeResult{Reachable: true, PathMTU: 1280, PacketTooBigWorks: false},
 	})
 
-	if len(findings) != 3 || findings[2].Check != "pmtu" || findings[2].Severity != SeverityError {
+	if len(findings) != 4 || findings[3].Check != "pmtu" || findings[3].Severity != SeverityError {
 		t.Fatalf("findings = %+v", findings)
 	}
 }
@@ -53,7 +53,7 @@ func TestServiceFindingsCheckExactListener(t *testing.T) {
 	}
 	findings := checker.serviceFindings(t.Context(), Service{Name: "media", DNSName: "media.example.com", Address: address, Port: 443, CheckLocal: true}, map[netip.Addr]struct{}{address: {}}, 1500, nil)
 
-	if len(findings) < 2 || findings[1].Check != "listener" || findings[1].Severity != SeverityError {
+	if len(findings) < 3 || findings[2].Check != "listener" || findings[2].Severity != SeverityError {
 		t.Fatalf("findings = %+v", findings)
 	}
 }

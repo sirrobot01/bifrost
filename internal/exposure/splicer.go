@@ -21,6 +21,8 @@ type Config struct {
 	MaxConnections int
 	DialTimeout    time.Duration
 	IdleTimeout    time.Duration
+	ProxyProtocol  bool
+	GlobalLimiter  *Limiter
 	Logger         *slog.Logger
 }
 
@@ -49,6 +51,38 @@ type Splicer struct {
 	accepted     atomic.Uint64
 	rejected     atomic.Uint64
 	dialFailures atomic.Uint64
+}
+
+type Limiter struct {
+	maximum int64
+	active  atomic.Int64
+}
+
+func NewLimiter(maximum int) (*Limiter, error) {
+	if maximum <= 0 {
+		return nil, errors.New("connection limit must be positive")
+	}
+	return &Limiter{maximum: int64(maximum)}, nil
+}
+
+func (l *Limiter) acquire() bool {
+	for {
+		active := l.active.Load()
+		if active >= l.maximum {
+			return false
+		}
+		if l.active.CompareAndSwap(active, active+1) {
+			return true
+		}
+	}
+}
+
+func (l *Limiter) release() {
+	l.active.Add(-1)
+}
+
+func (l *Limiter) Active() int64 {
+	return l.active.Load()
 }
 
 // Listen binds the configured IPv6 service address.
@@ -120,8 +154,14 @@ func (s *Splicer) Serve(ctx context.Context) error {
 			_ = client.Close()
 			continue
 		}
+		if s.config.GlobalLimiter != nil && !s.config.GlobalLimiter.acquire() {
+			s.mu.Unlock()
+			s.rejected.Add(1)
+			_ = client.Close()
+			continue
+		}
 
-		connection := &connection{client: client}
+		connection := &connection{client: client, limited: s.config.GlobalLimiter != nil}
 		s.connections[connection] = struct{}{}
 		s.wg.Add(1)
 		s.active.Add(1)
@@ -165,7 +205,7 @@ func (s *Splicer) Status() Status {
 		Accepted:          s.accepted.Load(),
 		Rejected:          s.rejected.Load(),
 		DialFailures:      s.dialFailures.Load(),
-		ClientIPPreserved: false,
+		ClientIPPreserved: s.config.ProxyProtocol,
 	}
 }
 
@@ -213,6 +253,9 @@ func (s *Splicer) serveConnection(connection *connection) {
 		delete(s.connections, connection)
 		s.mu.Unlock()
 		s.active.Add(-1)
+		if connection.limited {
+			s.config.GlobalLimiter.release()
+		}
 		s.wg.Done()
 	}()
 
@@ -225,6 +268,23 @@ func (s *Splicer) serveConnection(connection *connection) {
 	}
 	if !connection.setBackend(backend) {
 		return
+	}
+	if s.config.ProxyProtocol {
+		if err := backend.SetWriteDeadline(time.Now().Add(s.config.DialTimeout)); err != nil {
+			s.dialFailures.Add(1)
+			s.logger.Warn("PROXY protocol deadline failed", "backend", s.config.BackendAddress, "error", err)
+			return
+		}
+		if err := writeProxyV2(backend, connection.client); err != nil {
+			s.dialFailures.Add(1)
+			s.logger.Warn("PROXY protocol header failed", "backend", s.config.BackendAddress, "error", err)
+			return
+		}
+		if err := backend.SetWriteDeadline(time.Time{}); err != nil {
+			s.dialFailures.Add(1)
+			s.logger.Warn("PROXY protocol deadline reset failed", "backend", s.config.BackendAddress, "error", err)
+			return
+		}
 	}
 
 	client := &idleConn{Conn: connection.client, timeout: s.config.IdleTimeout}
@@ -239,6 +299,7 @@ type connection struct {
 	mu      sync.Mutex
 	backend net.Conn
 	closed  bool
+	limited bool
 }
 
 func (c *connection) setBackend(backend net.Conn) bool {

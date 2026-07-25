@@ -94,7 +94,45 @@ func TestSplicerShutdownForcesExpiredDrain(t *testing.T) {
 	waitFor(t, func() bool { return splicer.Status().ActiveConnections == 0 })
 }
 
+func TestSplicersShareGlobalConnectionLimit(t *testing.T) {
+	t.Parallel()
+
+	backend := startBlockingServer(t)
+	limiter, err := NewLimiter(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSplicer := startConfiguredSplicer(t, backend, false, limiter)
+	secondSplicer := startConfiguredSplicer(t, backend, false, limiter)
+	first, err := net.DialTCP("tcp6", nil, net.TCPAddrFromAddrPort(firstSplicer.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	waitFor(t, func() bool { return limiter.Active() == 1 })
+
+	second, err := net.DialTCP("tcp6", nil, net.TCPAddrFromAddrPort(secondSplicer.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 1)
+	if _, err := second.Read(buffer); !errors.Is(err, io.EOF) {
+		t.Fatalf("limited connection read error = %v, want EOF", err)
+	}
+	if secondSplicer.Status().Rejected != 1 {
+		t.Fatalf("status = %+v", secondSplicer.Status())
+	}
+}
+
 func startSplicer(t *testing.T, backend netip.AddrPort) *Splicer {
+	return startConfiguredSplicer(t, backend, false, nil)
+}
+
+func startConfiguredSplicer(t *testing.T, backend netip.AddrPort, proxyProtocol bool, limiter *Limiter) *Splicer {
 	t.Helper()
 	splicer, err := Listen(t.Context(), Config{
 		ServiceID:      "photos",
@@ -103,6 +141,8 @@ func startSplicer(t *testing.T, backend netip.AddrPort) *Splicer {
 		MaxConnections: 1,
 		DialTimeout:    time.Second,
 		IdleTimeout:    time.Second,
+		ProxyProtocol:  proxyProtocol,
+		GlobalLimiter:  limiter,
 		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

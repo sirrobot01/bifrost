@@ -108,7 +108,7 @@ func resolve(configFile config.Config) (resolution, error) {
 			Address:           address,
 			Listen:            service.Listen,
 			Backend:           backend,
-			ClientIPPreserved: mode == "direct",
+			ClientIPPreserved: mode == "direct" || service.ProxyProtocol,
 		})
 	}
 	return result, nil

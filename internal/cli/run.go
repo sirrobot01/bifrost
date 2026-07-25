@@ -9,12 +9,15 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/diagnose"
+	"github.com/sirrobot01/bifrost/internal/observability"
 )
 
 type Runner struct {
@@ -43,7 +46,7 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 	case "check":
 		code, err = r.runCheck(ctx, arguments[1:])
 	case "status":
-		err = r.runStatus(arguments[1:])
+		err = r.runStatus(ctx, arguments[1:])
 	case "serve":
 		err = r.runServe(ctx, arguments[1:])
 	case "version":
@@ -175,7 +178,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	}
 	services := make([]diagnose.Service, 0, len(resolved.Services))
 	for _, service := range resolved.Services {
-		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true})
+		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true, ClientIPPreserved: service.ClientIPPreserved})
 	}
 	if len(services) == 0 {
 		return 0, errors.New("config has no services to check")
@@ -206,11 +209,12 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	return 0, nil
 }
 
-func (r Runner) runStatus(arguments []string) error {
+func (r Runner) runStatus(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
+	offline := flags.Bool("offline", false, "derive desired state without contacting the daemon")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -220,6 +224,9 @@ func (r Runner) runStatus(arguments []string) error {
 	configFile, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+	if !*offline {
+		return r.writeLiveStatus(ctx, configFile, *jsonOutput)
 	}
 	status, err := resolve(configFile)
 	if err != nil {
@@ -244,6 +251,42 @@ func (r Runner) runStatus(arguments []string) error {
 	}
 	for _, service := range status.Services {
 		if _, err := fmt.Fprintf(r.Stdout, "%s: %s [%s]:%d -> %s, client IP preserved: %t\n", service.Name, service.Mode, service.Address, service.Listen, service.Backend, service.ClientIPPreserved); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r Runner) writeLiveStatus(ctx context.Context, configFile config.Config, jsonOutput bool) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+configFile.Metrics.Listen+"/status", nil)
+	if err != nil {
+		return err
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return fmt.Errorf("query running daemon: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon status returned HTTP %d", response.StatusCode)
+	}
+	var status observability.Snapshot
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&status); err != nil {
+		return fmt.Errorf("decode daemon status: %w", err)
+	}
+	if jsonOutput {
+		return writeJSON(r.Stdout, status)
+	}
+	if _, err := fmt.Fprintf(r.Stdout, "ready: %t\n", status.Ready); err != nil {
+		return err
+	}
+	if status.LastError != "" {
+		if _, err := fmt.Fprintf(r.Stdout, "last error: %s\n", status.LastError); err != nil {
+			return err
+		}
+	}
+	for _, service := range status.Services {
+		if _, err := fmt.Fprintf(r.Stdout, "%s: %s %v -> %s, connections: %d, client IP preserved: %t\n", service.ID, service.Mode, service.Addresses, service.Backend, service.ActiveConnections, service.ClientIPPreserved); err != nil {
 			return err
 		}
 	}

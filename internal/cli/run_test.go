@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -11,8 +14,23 @@ import (
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/netwatch"
+	"github.com/sirrobot01/bifrost/internal/observability"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
+
+const validRunnerConfig = `
+version: 1
+interface: lo
+owner_id: home
+secret_file: /unused
+dns:
+  provider: cloudflare
+  cloudflare:
+    zone_id: zone
+    api_token_file: /unused
+metrics:
+  listen: 127.0.0.1:9098
+`
 
 func TestRunnerInitWritesStrictConfig(t *testing.T) {
 	t.Parallel()
@@ -79,12 +97,37 @@ static_services:
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	runner := Runner{Stdout: &stdout, Stderr: &stderr, Version: "test"}
-	code := runner.Run(context.Background(), []string{"status", "--config", configPath})
+	code := runner.Run(context.Background(), []string{"status", "--offline", "--config", configPath})
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
 	}
 	if output := stdout.String(); !strings.Contains(output, "media: direct") || !strings.Contains(output, "client IP preserved: true") {
 		t.Fatalf("status = %s", output)
+	}
+}
+
+func TestRunnerStatusQueriesRunningDaemon(t *testing.T) {
+	t.Parallel()
+
+	statusServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(observability.Snapshot{Ready: true, Services: []observability.Service{{ID: "media", Mode: "direct", ClientIPPreserved: true}}})
+	}))
+	defer statusServer.Close()
+	metricsAddress := strings.TrimPrefix(statusServer.URL, "http://")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	input := strings.Replace(validRunnerConfig, "127.0.0.1:9098", metricsAddress, 1)
+	if err := os.WriteFile(configPath, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := Runner{Stdout: &stdout, Stderr: &stderr, Version: "test"}
+	if code := runner.Run(t.Context(), []string{"status", "--config", configPath}); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
+	}
+	if output := stdout.String(); !strings.Contains(output, "ready: true") || !strings.Contains(output, "media: direct") {
+		t.Fatalf("output = %s", output)
 	}
 }
 

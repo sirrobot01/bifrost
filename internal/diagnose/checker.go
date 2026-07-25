@@ -11,11 +11,12 @@ import (
 )
 
 type Service struct {
-	Name       string
-	DNSName    string
-	Address    netip.Addr
-	Port       uint16
-	CheckLocal bool
+	Name              string
+	DNSName           string
+	Address           netip.Addr
+	Port              uint16
+	CheckLocal        bool
+	ClientIPPreserved bool
 }
 
 type Input struct {
@@ -85,7 +86,12 @@ func (c *Checker) Check(ctx context.Context, input Input) (Report, error) {
 }
 
 func (c *Checker) serviceFindings(ctx context.Context, service Service, local map[netip.Addr]struct{}, interfaceMTU int, prober ExternalProber) []Finding {
-	findings := make([]Finding, 0, 4)
+	findings := make([]Finding, 0, 5)
+	if service.ClientIPPreserved {
+		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityInfo, Summary: service.Name + ": backend client identity is preserved"})
+	} else {
+		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityWarning, Summary: service.Name + ": splice mode hides the client address from the backend", Remediation: "prefer direct mode or enable PROXY v2 only when the backend explicitly supports it"})
+	}
 	if service.CheckLocal {
 		if _, exists := local[service.Address]; exists {
 			findings = append(findings, Finding{Check: "address", Severity: SeverityInfo, Summary: service.Name + ": service address is present on the host"})
