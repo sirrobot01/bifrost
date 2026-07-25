@@ -13,8 +13,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -26,7 +26,7 @@ jobs:
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/bifrost-linux-arm64 ./cmd/bifrost
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/bifrost-linux-armv7 ./cmd/bifrost
       - run: docker build --build-arg VERSION=ci .
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: v2.17.0
           args: check
@@ -37,8 +37,8 @@ jobs:
       run:
         working-directory: docs
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: docs/.nvmrc
           cache: npm
