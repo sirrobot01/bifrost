@@ -1,9 +1,20 @@
 # Security policy
 
-Please report suspected vulnerabilities privately through GitHub Security Advisories for this repository. Do not open a public issue with exploit details, live credentials, public service addresses, or edge keys.
+Report a suspected vulnerability through GitHub Security Advisories for this repository. Do not open a public issue for a security defect.
 
-Include the affected Bifrost version, deployment role, architecture, minimal configuration with secrets removed, reproduction steps, and expected impact. You should receive an acknowledgement within seven days.
+Include these details:
 
-Security fixes are provided for the latest released minor version. Until the first published v1 tag, only the current `main` branch is supported.
+- Affected Bifrost version
+- Deployment role
+- System architecture
+- Minimal configuration with all secrets removed
+- Reproduction steps
+- Expected impact
 
-Operational questions and configuration mistakes are not vulnerabilities, but reports involving DNS ownership bypass, unauthenticated edge metadata, unsafe edge destination resolution, secret disclosure, or privilege-boundary escape are security-sensitive and should use the private channel.
+Do not include live credentials, public service addresses, or edge keys. You should receive an acknowledgment within seven days.
+
+Security fixes support the latest released minor version. Before the first v1 release, only the current `main` branch is supported.
+
+Use the private channel for a report about DNS ownership bypass, unauthenticated edge metadata, unsafe edge destination resolution, secret disclosure, or privilege-boundary escape.
+
+Use a public discussion for an operational question or a configuration error that does not expose sensitive information.

@@ -1,0 +1,63 @@
+---
+title: Bifrost
+description: Publish self-hosted TCP services through native IPv6.
+template: splash
+hero:
+  tagline: Publish home services through native IPv6. Use an edge only for IPv4 clients.
+  actions:
+    - text: Install Bifrost
+      link: /bifrost/getting-started/installation/
+      icon: right-arrow
+      variant: primary
+    - text: Choose a deployment
+      link: /bifrost/getting-started/decision-guide/
+      icon: open-book
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What Bifrost does
+
+Bifrost runs on a Linux host in your home network. It watches the IPv6 prefix on that host. It creates service addresses, updates DNS records, and checks the inbound path.
+
+Bifrost supports three service modes:
+
+- `direct` publishes an IPv6 address that the backend owns.
+- `splice` accepts IPv6 and opens a new TCP connection to the backend.
+- `auto` uses direct mode only when all direct-mode checks pass.
+
+An optional edge accepts IPv4 traffic on a public server. The edge sends that traffic to the home service through IPv6. Native IPv6 traffic does not pass through the edge.
+
+<CardGrid>
+  <Card title="Keep the direct path" icon="rocket">
+    Direct mode does not add a Bifrost data path. The backend receives the client connection.
+  </Card>
+  <Card title="Follow prefix changes" icon="refresh">
+    Bifrost prepares the new address before it publishes the new DNS record.
+  </Card>
+  <Card title="Protect DNS ownership" icon="lock">
+    Bifrost uses a TXT marker. It does not replace a record that belongs to another owner.
+  </Card>
+  <Card title="Find network faults" icon="magnifier">
+    The check command tests addresses, listeners, DNS, firewall policy, and an optional external path.
+  </Card>
+</CardGrid>
+
+## Requirements
+
+The home role requires these items:
+
+- A Linux host
+- A global IPv6 `/64` on that host
+- Permission to add IPv6 addresses
+- Permission to bind the public TCP ports
+- An inbound rule on the home router
+- Supported DNS provider credentials
+
+Bifrost cannot open the firewall on an ISP router. Bifrost cannot create an IPv6 path when the ISP does not provide one.
+
+## Product limits
+
+Bifrost supports TCP in v1. It does not terminate TLS. It does not issue certificates. It does not add user authentication. It does not proxy UDP or QUIC. It does not change application configuration.
+
+Bifrost is not a VPN. Bifrost is not a hole-punching system. Clients do not need Bifrost software.

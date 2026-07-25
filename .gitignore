@@ -16,6 +16,8 @@ auth.json
 .ven/
 .env
 node_modules/
+docs/.astro/
+docs/dist/
 .venv/
 .stignore
 .stfolder/**
