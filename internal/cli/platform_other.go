@@ -3,10 +3,15 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 
+	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
@@ -28,4 +33,8 @@ func platformSnapshot(interfaceName string) (netwatch.Snapshot, error) {
 		}
 	}
 	return snapshot, nil
+}
+
+func platformServe(context.Context, config.Config, bool, *slog.Logger, io.Writer) error {
+	return errors.New("the Bifrost home runtime requires Linux")
 }

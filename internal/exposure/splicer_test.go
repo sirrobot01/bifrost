@@ -22,7 +22,7 @@ func TestSplicerPreservesTCPHalfClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if _, err := io.WriteString(client, "request body"); err != nil {
 		t.Fatal(err)
 	}
@@ -54,14 +54,14 @@ func TestSplicerEnforcesConnectionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer func() { _ = first.Close() }()
 	waitFor(t, func() bool { return splicer.Status().ActiveConnections == 1 })
 
 	second, err := net.DialTCP("tcp6", nil, net.TCPAddrFromAddrPort(splicer.Address()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
+	defer func() { _ = second.Close() }()
 	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSplicerShutdownForcesExpiredDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	waitFor(t, func() bool { return splicer.Status().ActiveConnections == 1 })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -126,7 +126,7 @@ func startSplicer(t *testing.T, backend netip.AddrPort) *Splicer {
 func startReplyAfterEOFServer(t *testing.T) netip.AddrPort {
 	t.Helper()
 	return startTCP4Server(t, func(connection net.Conn) {
-		defer connection.Close()
+		defer func() { _ = connection.Close() }()
 		request, err := io.ReadAll(connection)
 		if err != nil {
 			return
@@ -138,7 +138,7 @@ func startReplyAfterEOFServer(t *testing.T) netip.AddrPort {
 func startBlockingServer(t *testing.T) netip.AddrPort {
 	t.Helper()
 	return startTCP4Server(t, func(connection net.Conn) {
-		defer connection.Close()
+		defer func() { _ = connection.Close() }()
 		_, _ = bufio.NewReader(connection).ReadString('\n')
 	})
 }

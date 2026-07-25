@@ -61,10 +61,13 @@ func (p *HTTPProber) Probe(ctx context.Context, request ProbeRequest) (ProbeResu
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("send probe request: %w", err)
 	}
-	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	closeErr := response.Body.Close()
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("read probe response: %w", err)
+	}
+	if closeErr != nil {
+		return ProbeResult{}, fmt.Errorf("close probe response: %w", closeErr)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return ProbeResult{}, fmt.Errorf("probe returned HTTP %d: %s", response.StatusCode, bytes.TrimSpace(responseBody))

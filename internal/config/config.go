@@ -294,8 +294,8 @@ func (s StaticService) Validate() error {
 		return errors.New("mode must be auto, direct, or splice")
 	}
 	if s.Mode == "direct" {
-		if !backend.Addr().Is6() || backend.Addr().IsPrivate() || backend.Port() != s.Listen {
-			return errors.New("direct mode requires a public IPv6 backend whose port matches listen")
+		if !backend.Addr().Is6() || backend.Port() != s.Listen || backend.Addr().IsPrivate() {
+			return errors.New("direct mode requires an IPv6 backend whose port matches listen")
 		}
 	}
 	if s.PublicAddress != "" {
@@ -303,12 +303,9 @@ func (s StaticService) Validate() error {
 		if err != nil || !address.Is6() || address.IsPrivate() || !address.IsGlobalUnicast() {
 			return errors.New("public_address must be public IPv6")
 		}
-		if s.Mode == "direct" && address != backend.Addr() {
+		if s.Mode == "direct" && !backend.Addr().IsUnspecified() && address != backend.Addr() {
 			return errors.New("direct public_address must match the backend address")
 		}
-	}
-	if s.Mode == "direct" && s.PublicAddress == "" {
-		return errors.New("direct mode requires public_address")
 	}
 	return nil
 }

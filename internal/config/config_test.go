@@ -66,6 +66,16 @@ func TestDecodeRejectsUnsafeDirectMode(t *testing.T) {
 	}
 }
 
+func TestDecodeAllowsObservedDirectAddress(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(validConfig, "192.0.2.10:8096", `"[::]:443"`, 1)
+	input = strings.Replace(input, "mode: splice", "mode: direct", 1)
+	if _, err := Decode(strings.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadSecretRejectsBroadPermissions(t *testing.T) {
 	t.Parallel()
 

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -43,6 +44,8 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 		code, err = r.runCheck(ctx, arguments[1:])
 	case "status":
 		err = r.runStatus(arguments[1:])
+	case "serve":
+		err = r.runServe(ctx, arguments[1:])
 	case "version":
 		_, err = fmt.Fprintln(r.Stdout, r.Version)
 	case "help", "-h", "--help":
@@ -55,6 +58,34 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 		return 1
 	}
 	return code
+}
+
+func (r Runner) runServe(ctx context.Context, arguments []string) error {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
+	dryRun := flags.Bool("dry-run", false, "print the reconciliation plan without mutations")
+	logFormat := flags.String("log-format", "json", "json or text")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("serve accepts flags only")
+	}
+	var handler slog.Handler
+	switch *logFormat {
+	case "json":
+		handler = slog.NewJSONHandler(r.Stderr, nil)
+	case "text":
+		handler = slog.NewTextHandler(r.Stderr, nil)
+	default:
+		return errors.New("log-format must be json or text")
+	}
+	configFile, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	return platformServe(ctx, configFile, *dryRun, slog.New(handler), r.Stdout)
 }
 
 func (r Runner) runInit(arguments []string) error {
@@ -220,7 +251,7 @@ func (r Runner) runStatus(arguments []string) error {
 }
 
 func (r Runner) usage() {
-	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <init|check|status|version> [flags]")
+	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <init|check|serve|status|version> [flags]")
 }
 
 func discoverInterface() (string, error) {

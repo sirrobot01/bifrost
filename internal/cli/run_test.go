@@ -3,10 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/sirrobot01/bifrost/internal/netwatch"
+	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
 func TestRunnerInitWritesStrictConfig(t *testing.T) {
@@ -24,6 +29,24 @@ func TestRunnerInitWritesStrictConfig(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("output does not contain %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestObservedAddressUsesStableCandidate(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	snapshot := netwatch.Snapshot{Candidates: []serviceaddr.Candidate{
+		{Prefix: netip.MustParsePrefix("2001:db8:1::20/64"), Temporary: true},
+		{Prefix: netip.MustParsePrefix("2001:db8:1::30/64")},
+		{Prefix: netip.MustParsePrefix("2001:db8:1::10/64")},
+	}}
+	address, err := observedAddress(snapshot, serviceaddr.Selection{Prefix: netip.MustParsePrefix("2001:db8:1::/64")}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := netip.MustParseAddr("2001:db8:1::10"); address != want {
+		t.Fatalf("address = %s, want %s", address, want)
 	}
 }
 

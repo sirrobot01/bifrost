@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/config"
+	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
@@ -28,19 +30,26 @@ type resolution struct {
 }
 
 func resolve(configFile config.Config) (resolution, error) {
-	needManagedAddress := false
+	needPrefix := false
+	needSecret := false
 	for _, service := range configFile.StaticServices {
-		if selectedMode(service) == "splice" {
-			needManagedAddress = true
-			break
+		mode := selectedMode(service)
+		if mode == "splice" {
+			needPrefix = true
+			needSecret = true
+		}
+		if mode == "direct" && service.PublicAddress == "" {
+			needPrefix = true
 		}
 	}
 
 	result := resolution{Interface: configFile.Interface}
 	var selection serviceaddr.Selection
 	var deriver serviceaddr.Deriver
-	if needManagedAddress {
-		snapshot, err := platformSnapshot(configFile.Interface)
+	var snapshot netwatch.Snapshot
+	if needPrefix {
+		var err error
+		snapshot, err = platformSnapshot(configFile.Interface)
 		if err != nil {
 			return resolution{}, err
 		}
@@ -59,13 +68,15 @@ func resolve(configFile config.Config) (resolution, error) {
 				result.IgnoredPrefixes = append(result.IgnoredPrefixes, candidate)
 			}
 		}
-		secret, err := config.ReadSecret(configFile.SecretFile)
-		if err != nil {
-			return resolution{}, err
-		}
-		deriver, err = serviceaddr.NewDeriver(secret)
-		if err != nil {
-			return resolution{}, err
+		if needSecret {
+			secret, err := config.ReadSecret(configFile.SecretFile)
+			if err != nil {
+				return resolution{}, err
+			}
+			deriver, err = serviceaddr.NewDeriver(secret)
+			if err != nil {
+				return resolution{}, err
+			}
 		}
 	} else if snapshot, err := platformSnapshot(configFile.Interface); err == nil {
 		result.MTU = snapshot.MTU
@@ -73,14 +84,21 @@ func resolve(configFile config.Config) (resolution, error) {
 
 	result.Services = make([]resolvedService, 0, len(configFile.StaticServices))
 	for _, service := range configFile.StaticServices {
+		var err error
 		backend := netip.MustParseAddrPort(service.Backend)
 		mode := selectedMode(service)
-		address := backend.Addr()
+		var address netip.Addr
 		if mode == "splice" {
-			var err error
 			address, err = deriver.Address(selection.Prefix, service.Name, 0)
 			if err != nil {
 				return resolution{}, fmt.Errorf("derive address for %s: %w", service.Name, err)
+			}
+		} else if service.PublicAddress != "" {
+			address = netip.MustParseAddr(service.PublicAddress)
+		} else {
+			address, err = observedAddress(snapshot, selection, time.Now())
+			if err != nil {
+				return resolution{}, fmt.Errorf("select direct address for %s: %w", service.Name, err)
 			}
 		}
 		result.Services = append(result.Services, resolvedService{
@@ -106,5 +124,29 @@ func selectedMode(service config.StaticService) string {
 			return "direct"
 		}
 	}
+	if backend.Addr().Is6() && backend.Addr().IsUnspecified() && backend.Port() == service.Listen {
+		return "direct"
+	}
 	return "splice"
+}
+
+func observedAddress(snapshot netwatch.Snapshot, selection serviceaddr.Selection, now time.Time) (netip.Addr, error) {
+	var addresses []netip.Addr
+	for _, candidate := range snapshot.Candidates {
+		if candidate.Prefix.Masked() != selection.Prefix || candidate.Temporary || candidate.Deprecated {
+			continue
+		}
+		if !candidate.PreferredUntil.IsZero() && !now.Before(candidate.PreferredUntil) {
+			continue
+		}
+		if !candidate.ValidUntil.IsZero() && !now.Before(candidate.ValidUntil) {
+			continue
+		}
+		addresses = append(addresses, candidate.Prefix.Addr())
+	}
+	if len(addresses) == 0 {
+		return netip.Addr{}, fmt.Errorf("no stable address exists in %s", selection.Prefix)
+	}
+	slices.SortFunc(addresses, netip.Addr.Compare)
+	return addresses[0], nil
 }

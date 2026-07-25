@@ -15,8 +15,15 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("open config: %w", err)
 	}
-	defer file.Close()
-	return Decode(file)
+	config, decodeErr := Decode(file)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return Config{}, decodeErr
+	}
+	if closeErr != nil {
+		return Config{}, fmt.Errorf("close config: %w", closeErr)
+	}
+	return config, nil
 }
 
 func Decode(reader io.Reader) (Config, error) {
