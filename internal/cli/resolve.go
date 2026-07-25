@@ -18,6 +18,7 @@ type resolvedService struct {
 	Address           netip.Addr     `json:"address"`
 	Listen            uint16         `json:"listen"`
 	Backend           netip.AddrPort `json:"backend"`
+	EdgeAddress       netip.Addr     `json:"edge_address,omitempty"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
 }
 
@@ -101,6 +102,10 @@ func resolve(configFile config.Config) (resolution, error) {
 				return resolution{}, fmt.Errorf("select direct address for %s: %w", service.Name, err)
 			}
 		}
+		var edgeAddress netip.Addr
+		if service.Edge {
+			edgeAddress = netip.MustParseAddr(configFile.Edge.IPv4Address)
+		}
 		result.Services = append(result.Services, resolvedService{
 			Name:              service.Name,
 			DNSName:           service.DNSName,
@@ -108,6 +113,7 @@ func resolve(configFile config.Config) (resolution, error) {
 			Address:           address,
 			Listen:            service.Listen,
 			Backend:           backend,
+			EdgeAddress:       edgeAddress,
 			ClientIPPreserved: mode == "direct" || service.ProxyProtocol,
 		})
 	}

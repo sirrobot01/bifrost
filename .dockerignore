@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+bin
+dist
+tmp
+data
+*.db
+*.log

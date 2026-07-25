@@ -17,6 +17,7 @@ import (
 
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/diagnose"
+	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/edge"
 	"github.com/sirrobot01/bifrost/internal/observability"
 )
@@ -132,7 +133,7 @@ func (r Runner) runInit(arguments []string) error {
 	output := flags.String("output", "-", "config output path or - for stdout")
 	force := flags.Bool("force", false, "replace an existing output file")
 	ownerID := flags.String("owner-id", defaultOwnerID(), "DNS ownership identity")
-	secretFile := flags.String("secret-file", "/etc/bifrost/secret", "host address-derivation secret")
+	secretFile := flags.String("secret-file", "/etc/bifrost/address-secret", "host address-derivation secret")
 	zoneID := flags.String("cloudflare-zone-id", "CHANGE_ME", "Cloudflare zone ID")
 	tokenFile := flags.String("cloudflare-token-file", "/etc/bifrost/cloudflare-token", "Cloudflare token file")
 	if err := flags.Parse(arguments); err != nil {
@@ -229,6 +230,27 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	provider, err := dnspublish.NewProvider(configFile.DNS)
+	if err != nil {
+		report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityError, Summary: "DNS provider credentials or configuration are unavailable", Detail: err.Error(), Remediation: "install the provider credential with mode 0600 and verify the configured zone"})
+	} else {
+		reconciler, err := dnspublish.NewReconciler(provider, configFile.OwnerID)
+		if err != nil {
+			return 0, err
+		}
+		for _, service := range resolved.Services {
+			var edgeAddresses []netip.Addr
+			if service.EdgeAddress.IsValid() {
+				edgeAddresses = []netip.Addr{service.EdgeAddress}
+			}
+			err := reconciler.Verify(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: []netip.Addr{service.Address}, EdgeAddresses: edgeAddresses, TTL: configFile.DNS.TTL.Duration()})
+			if err != nil {
+				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityError, Summary: service.Name + ": provider DNS state or ownership is incorrect", Detail: err.Error(), Remediation: "run bifrost serve --dry-run, then reconcile only after reviewing the planned DNS changes"})
+			} else {
+				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityInfo, Summary: service.Name + ": provider DNS state is owned and matches the configuration"})
+			}
+		}
+	}
 	if *jsonOutput {
 		err = writeJSON(r.Stdout, report)
 	} else {
@@ -284,7 +306,11 @@ func (r Runner) runStatus(ctx context.Context, arguments []string) error {
 		}
 	}
 	for _, service := range status.Services {
-		if _, err := fmt.Fprintf(r.Stdout, "%s: %s [%s]:%d -> %s, client IP preserved: %t\n", service.Name, service.Mode, service.Address, service.Listen, service.Backend, service.ClientIPPreserved); err != nil {
+		edge := "disabled"
+		if service.EdgeAddress.IsValid() {
+			edge = service.EdgeAddress.String()
+		}
+		if _, err := fmt.Fprintf(r.Stdout, "%s: %s [%s]:%d -> %s, edge: %s, client IP preserved: %t\n", service.Name, service.Mode, service.Address, service.Listen, service.Backend, edge, service.ClientIPPreserved); err != nil {
 			return err
 		}
 	}

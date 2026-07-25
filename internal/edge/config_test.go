@@ -21,3 +21,11 @@ func TestEdgeConfigRejectsStaticTLSPortConflict(t *testing.T) {
 		t.Fatal("config accepted a conflicting port")
 	}
 }
+
+func TestExampleConfigLoads(t *testing.T) {
+	t.Parallel()
+
+	if _, err := LoadConfig("../../configs/edge.example.yaml"); err != nil {
+		t.Fatal(err)
+	}
+}

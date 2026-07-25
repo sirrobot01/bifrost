@@ -8,6 +8,7 @@ config.yaml
 *.log.*
 *.test
 dist/
+/bin/
 /writ
 tmp/**
 logs/**

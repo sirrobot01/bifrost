@@ -173,6 +173,31 @@ func TestReconcilerEnsureCorrectsRecordSettings(t *testing.T) {
 	}
 }
 
+func TestReconcilerVerifyChecksOwnedStateWithoutMutation(t *testing.T) {
+	t.Parallel()
+
+	provider := &memoryProvider{records: []Record{
+		{ID: "owner", Type: RecordTXT, Name: "_bifrost.media.example.com", Content: "bifrost-owner=host-1", TTL: 60},
+		{ID: "ipv6", Type: RecordAAAA, Name: "media.example.com", Content: "2001:db8::10", TTL: 60},
+		{ID: "ipv4", Type: RecordA, Name: "media.example.com", Content: "192.0.2.20", TTL: 60},
+	}}
+	reconciler, err := NewReconciler(provider, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := Publication{Name: "media.example.com", Addresses: []netip.Addr{netip.MustParseAddr("2001:db8::10")}, EdgeAddresses: []netip.Addr{netip.MustParseAddr("192.0.2.20")}, TTL: time.Minute}
+	if err := reconciler.Verify(t.Context(), publication); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.events) != 0 {
+		t.Fatalf("provider was mutated: %v", provider.events)
+	}
+	provider.records[1].Content = "2001:db8::11"
+	if err := reconciler.Verify(t.Context(), publication); err == nil {
+		t.Fatal("Verify accepted drifted DNS state")
+	}
+}
+
 func TestReconcilerRefusesUnownedRecords(t *testing.T) {
 	t.Parallel()
 

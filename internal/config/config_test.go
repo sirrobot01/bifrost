@@ -97,3 +97,16 @@ func TestReadSecretRejectsBroadPermissions(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestExampleConfigDecodes(t *testing.T) {
+	t.Parallel()
+
+	file, err := os.Open("../../configs/bifrost.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	if _, err := Decode(file); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,0 +1,18 @@
+services:
+  bifrost:
+    image: ghcr.io/sirrobot01/bifrost:1
+    command: serve --config /etc/bifrost/config.yaml
+    user: "0:0"
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 3m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /etc/bifrost:/etc/bifrost:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro

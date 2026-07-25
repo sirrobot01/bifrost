@@ -1,0 +1,39 @@
+version: 1
+interface: eth0
+owner_id: home-1
+secret_file: /etc/bifrost/address-secret
+settle_window: 10s
+drain_grace: 2m
+
+dns:
+  provider: cloudflare
+  ttl: 60s
+  cloudflare:
+    zone_id: CHANGE_ME
+    api_token_file: /etc/bifrost/cloudflare-token
+
+firewall:
+  mode: advisory
+
+probe: {}
+
+metrics:
+  listen: 127.0.0.1:9098
+
+docker:
+  enabled: false
+  socket: /var/run/docker.sock
+
+edge:
+  enabled: false
+  max_clock_skew: 30s
+  header_timeout: 250ms
+
+static_services:
+  - name: jellyfin
+    backend: 127.0.0.1:8096
+    listen: 443
+    dns: media.example.com
+    mode: splice
+    proxy_protocol: false
+    edge: false

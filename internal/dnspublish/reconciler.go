@@ -137,6 +137,56 @@ func (r *Reconciler) reconcileRecords(ctx context.Context, name string, recordTy
 	return nil
 }
 
+// Verify checks ownership and exact provider state without mutation.
+func (r *Reconciler) Verify(ctx context.Context, publication Publication) error {
+	publication, err := normalizePublication(publication)
+	if err != nil {
+		return err
+	}
+	markers, err := r.provider.List(ctx, ownershipName(publication.Name), RecordTXT)
+	if err != nil {
+		return fmt.Errorf("list DNS ownership records: %w", err)
+	}
+	if err := verifyOwnership(markers, ownershipPrefix+r.ownerID, true); err != nil {
+		return fmt.Errorf("verify %s: %w", publication.Name, err)
+	}
+	for _, expected := range []struct {
+		recordType RecordType
+		addresses  []netip.Addr
+	}{
+		{recordType: RecordAAAA, addresses: publication.Addresses},
+		{recordType: RecordA, addresses: publication.EdgeAddresses},
+	} {
+		records, err := r.provider.List(ctx, publication.Name, expected.recordType)
+		if err != nil {
+			return fmt.Errorf("list %s records: %w", expected.recordType, err)
+		}
+		wanted := make(map[netip.Addr]struct{}, len(expected.addresses))
+		for _, address := range expected.addresses {
+			wanted[address] = struct{}{}
+		}
+		if len(records) != len(wanted) {
+			return fmt.Errorf("%s record count is %d, expected %d", expected.recordType, len(records), len(wanted))
+		}
+		for _, record := range records {
+			address, err := netip.ParseAddr(record.Content)
+			if err != nil {
+				return fmt.Errorf("invalid %s record %q", expected.recordType, record.Content)
+			}
+			if _, exists := wanted[address]; !exists {
+				return fmt.Errorf("unexpected %s record %s", expected.recordType, record.Content)
+			}
+			if record.Proxied {
+				return fmt.Errorf("%s record %s is proxied", expected.recordType, record.Content)
+			}
+			if record.TTL != 0 && record.TTL != int(publication.TTL.Seconds()) {
+				return fmt.Errorf("%s record %s has TTL %d, expected %d", expected.recordType, record.Content, record.TTL, int(publication.TTL.Seconds()))
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Reconciler) Prune(ctx context.Context, desiredNames []string) error {
 	desired := make(map[string]struct{}, len(desiredNames))
 	for _, name := range desiredNames {

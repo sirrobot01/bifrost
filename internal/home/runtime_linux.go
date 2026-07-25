@@ -67,7 +67,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := providerFromConfig(configFile)
+	provider, err := dnspublish.NewProvider(configFile.DNS)
 	if err != nil {
 		return nil, err
 	}
@@ -283,41 +283,6 @@ func (r *Runtime) watchDocker(ctx context.Context, changes chan<- struct{}) {
 			return
 		case <-timer.C:
 		}
-	}
-}
-
-func providerFromConfig(configFile config.Config) (dnspublish.Provider, error) {
-	switch configFile.DNS.Provider {
-	case "cloudflare":
-		token, err := config.ReadSecret(configFile.DNS.Cloudflare.APITokenFile)
-		if err != nil {
-			return nil, fmt.Errorf("cloudflare token: %w", err)
-		}
-		return dnspublish.NewCloudflare(dnspublish.CloudflareConfig{ZoneID: configFile.DNS.Cloudflare.ZoneID, APIToken: string(token)})
-	case "desec":
-		token, err := config.ReadSecret(configFile.DNS.DESEC.TokenFile)
-		if err != nil {
-			return nil, fmt.Errorf("deSEC token: %w", err)
-		}
-		return dnspublish.NewDESEC(dnspublish.DESECConfig{Zone: configFile.DNS.DESEC.Zone, Token: string(token)})
-	case "dynv6":
-		token, err := config.ReadSecret(configFile.DNS.Dynv6.TokenFile)
-		if err != nil {
-			return nil, fmt.Errorf("dynv6 token: %w", err)
-		}
-		return dnspublish.NewDynv6(dnspublish.Dynv6Config{Zone: configFile.DNS.Dynv6.Zone, Token: string(token)})
-	case "rfc2136":
-		secret := ""
-		if configFile.DNS.RFC2136.KeyFile != "" {
-			key, err := config.ReadSecret(configFile.DNS.RFC2136.KeyFile)
-			if err != nil {
-				return nil, fmt.Errorf("rfc 2136 key: %w", err)
-			}
-			secret = string(key)
-		}
-		return dnspublish.NewRFC2136(dnspublish.RFC2136Config{Server: configFile.DNS.RFC2136.Server, Zone: configFile.DNS.RFC2136.Zone, KeyName: configFile.DNS.RFC2136.KeyName, KeySecret: secret, Algorithm: configFile.DNS.RFC2136.Algorithm})
-	default:
-		return nil, fmt.Errorf("unsupported DNS provider %q", configFile.DNS.Provider)
 	}
 }
 

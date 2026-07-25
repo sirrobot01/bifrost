@@ -1,0 +1,15 @@
+version: 1
+listen: :443
+allow:
+  - media.example.com
+  - photos.example.com
+key_file: /etc/bifrost/edge-key
+handshake_timeout: 5s
+idle_timeout: 5m
+max_connections: 4096
+rate_per_minute: 120
+rate_burst: 20
+negative_ttl: 15s
+stale_on_error: 30s
+static_maps:
+  "2222": ssh.example.com:22
