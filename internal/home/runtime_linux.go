@@ -14,6 +14,7 @@ import (
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
+	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"github.com/sirrobot01/bifrost/internal/exposure"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/observability"
@@ -86,6 +87,17 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
+	var edgeVerifier *edgeauth.Verifier
+	if configFile.Edge.Enabled {
+		edgeKey, err := config.ReadSecret(configFile.Edge.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("edge key: %w", err)
+		}
+		edgeVerifier, err = edgeauth.NewVerifier(edgeKey, configFile.Edge.MaxClockSkew.Duration())
+		if err != nil {
+			return nil, err
+		}
+	}
 	controller, err := NewController(ControllerConfig{
 		Addresses: addressManager,
 		Deriver:   deriver,
@@ -93,13 +105,15 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		Listen: func(ctx context.Context, listenerConfig exposure.Config) (Splicer, error) {
 			return exposure.Listen(ctx, listenerConfig)
 		},
-		TTL:            configFile.DNS.TTL.Duration(),
-		DrainGrace:     configFile.DrainGrace.Duration(),
-		DialTimeout:    10 * time.Second,
-		IdleTimeout:    5 * time.Minute,
-		Logger:         logger,
-		PrefixOverride: prefixOverride,
-		GlobalLimiter:  globalLimiter,
+		TTL:               configFile.DNS.TTL.Duration(),
+		DrainGrace:        configFile.DrainGrace.Duration(),
+		DialTimeout:       10 * time.Second,
+		IdleTimeout:       5 * time.Minute,
+		Logger:            logger,
+		PrefixOverride:    prefixOverride,
+		GlobalLimiter:     globalLimiter,
+		EdgeVerifier:      edgeVerifier,
+		EdgeHeaderTimeout: configFile.Edge.HeaderTimeout.Duration(),
 	})
 	if err != nil {
 		return nil, err
@@ -321,6 +335,7 @@ func (r *Runtime) observabilitySnapshot() observability.Snapshot {
 			DNSName:           status.DNSName,
 			Mode:              string(status.Mode),
 			Addresses:         status.Addresses,
+			EdgeAddresses:     status.EdgeAddresses,
 			Backend:           status.Backend,
 			ClientIPPreserved: status.ClientIPPreserved,
 			ActiveConnections: status.ActiveConnections,

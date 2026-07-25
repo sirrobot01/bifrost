@@ -23,6 +23,8 @@ type Service struct {
 	ListenPort     uint16
 	Backend        netip.AddrPort
 	ProxyProtocol  bool
+	Edge           bool
+	EdgeAddress    netip.Addr
 	MaxConnections int
 }
 
@@ -34,12 +36,16 @@ func (s Service) validate() error {
 		Listen:        s.ListenPort,
 		Backend:       s.Backend.String(),
 		ProxyProtocol: s.ProxyProtocol,
+		Edge:          s.Edge,
 	}
 	if s.PublicAddress.IsValid() {
 		configured.PublicAddress = s.PublicAddress.String()
 	}
 	if err := configured.Validate(); err != nil {
 		return err
+	}
+	if s.Edge && (!s.EdgeAddress.IsValid() || !s.EdgeAddress.Is4() || !s.EdgeAddress.IsGlobalUnicast() || s.EdgeAddress.IsPrivate()) {
+		return fmt.Errorf("edge address must be public IPv4")
 	}
 	if s.MaxConnections <= 0 {
 		return fmt.Errorf("maximum connections must be positive")

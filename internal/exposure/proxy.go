@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 )
 
 var proxyV2Signature = [12]byte{0x0d, 0x0a, 0x0d, 0x0a, 0x00, 0x0d, 0x0a, 0x51, 0x55, 0x49, 0x54, 0x0a}
@@ -18,20 +19,39 @@ func writeProxyV2(destination io.Writer, source net.Conn) error {
 	if !ok {
 		return errors.New("client local address is not TCP")
 	}
-	remoteIP := remote.IP.To16()
-	localIP := local.IP.To16()
-	if remoteIP == nil || localIP == nil || remote.IP.To4() != nil || local.IP.To4() != nil {
-		return errors.New("PROXY v2 source and destination must be IPv6")
+	return writeProxyV2Addresses(destination, remote.AddrPort(), local.AddrPort())
+}
+
+func writeProxyV2Addresses(destination io.Writer, source, target netip.AddrPort) error {
+	if !source.IsValid() || !target.IsValid() || source.Addr().BitLen() != target.Addr().BitLen() {
+		return errors.New("PROXY v2 addresses must be valid and from the same family")
 	}
-	header := make([]byte, 16+36)
+	addressLength := 12
+	family := byte(0x11)
+	if source.Addr().Is6() {
+		addressLength = 36
+		family = 0x21
+	}
+	header := make([]byte, 16+addressLength)
 	copy(header, proxyV2Signature[:])
 	header[12] = 0x21
-	header[13] = 0x21
-	binary.BigEndian.PutUint16(header[14:16], 36)
-	copy(header[16:32], remoteIP)
-	copy(header[32:48], localIP)
-	binary.BigEndian.PutUint16(header[48:50], uint16(remote.Port))
-	binary.BigEndian.PutUint16(header[50:52], uint16(local.Port))
+	header[13] = family
+	binary.BigEndian.PutUint16(header[14:16], uint16(addressLength))
+	if source.Addr().Is4() {
+		sourceAddress := source.Addr().As4()
+		targetAddress := target.Addr().As4()
+		copy(header[16:20], sourceAddress[:])
+		copy(header[20:24], targetAddress[:])
+		binary.BigEndian.PutUint16(header[24:26], source.Port())
+		binary.BigEndian.PutUint16(header[26:28], target.Port())
+	} else {
+		sourceAddress := source.Addr().As16()
+		targetAddress := target.Addr().As16()
+		copy(header[16:32], sourceAddress[:])
+		copy(header[32:48], targetAddress[:])
+		binary.BigEndian.PutUint16(header[48:50], source.Port())
+		binary.BigEndian.PutUint16(header[50:52], target.Port())
+	}
 	written, err := destination.Write(header)
 	if err == nil && written != len(header) {
 		return io.ErrShortWrite

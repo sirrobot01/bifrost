@@ -1,6 +1,7 @@
 package exposure
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -11,19 +12,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/sirrobot01/bifrost/internal/edgeauth"
 )
 
 // Config defines one IPv6 TCP listener and its backend.
 type Config struct {
-	ServiceID      string
-	ListenAddress  netip.AddrPort
-	BackendAddress netip.AddrPort
-	MaxConnections int
-	DialTimeout    time.Duration
-	IdleTimeout    time.Duration
-	ProxyProtocol  bool
-	GlobalLimiter  *Limiter
-	Logger         *slog.Logger
+	ServiceID         string
+	ListenAddress     netip.AddrPort
+	BackendAddress    netip.AddrPort
+	MaxConnections    int
+	DialTimeout       time.Duration
+	IdleTimeout       time.Duration
+	ProxyProtocol     bool
+	GlobalLimiter     *Limiter
+	EdgeVerifier      *edgeauth.Verifier
+	EdgeHeaderTimeout time.Duration
+	EdgeIdentity      string
+	Logger            *slog.Logger
 }
 
 // Status is a point-in-time view of splice activity.
@@ -65,7 +71,7 @@ func NewLimiter(maximum int) (*Limiter, error) {
 	return &Limiter{maximum: int64(maximum)}, nil
 }
 
-func (l *Limiter) acquire() bool {
+func (l *Limiter) Acquire() bool {
 	for {
 		active := l.active.Load()
 		if active >= l.maximum {
@@ -77,7 +83,7 @@ func (l *Limiter) acquire() bool {
 	}
 }
 
-func (l *Limiter) release() {
+func (l *Limiter) Release() {
 	l.active.Add(-1)
 }
 
@@ -154,7 +160,7 @@ func (s *Splicer) Serve(ctx context.Context) error {
 			_ = client.Close()
 			continue
 		}
-		if s.config.GlobalLimiter != nil && !s.config.GlobalLimiter.acquire() {
+		if s.config.GlobalLimiter != nil && !s.config.GlobalLimiter.Acquire() {
 			s.mu.Unlock()
 			s.rejected.Add(1)
 			_ = client.Close()
@@ -228,6 +234,12 @@ func (c Config) validate() error {
 	if c.IdleTimeout <= 0 {
 		return errors.New("idle timeout must be positive")
 	}
+	if c.EdgeVerifier != nil && c.EdgeHeaderTimeout <= 0 {
+		return errors.New("edge header timeout must be positive when edge authentication is enabled")
+	}
+	if c.EdgeVerifier != nil && c.EdgeIdentity == "" {
+		return errors.New("edge identity is required when edge authentication is enabled")
+	}
 	return nil
 }
 
@@ -254,11 +266,22 @@ func (s *Splicer) serveConnection(connection *connection) {
 		s.mu.Unlock()
 		s.active.Add(-1)
 		if connection.limited {
-			s.config.GlobalLimiter.release()
+			s.config.GlobalLimiter.Release()
 		}
 		s.wg.Done()
 	}()
 
+	client := connection.client
+	var edgeMetadata *edgeauth.Metadata
+	if s.config.EdgeVerifier != nil {
+		var err error
+		client, edgeMetadata, err = inspectEdgeHeader(client, s.config.EdgeIdentity, s.config.EdgeVerifier, s.config.EdgeHeaderTimeout)
+		if err != nil {
+			s.rejected.Add(1)
+			s.logger.Warn("authenticated edge header rejected", "client", connection.client.RemoteAddr(), "error", err)
+			return
+		}
+	}
 	dialer := net.Dialer{Timeout: s.config.DialTimeout}
 	backend, err := dialer.Dial("tcp", s.config.BackendAddress.String())
 	if err != nil {
@@ -275,7 +298,13 @@ func (s *Splicer) serveConnection(connection *connection) {
 			s.logger.Warn("PROXY protocol deadline failed", "backend", s.config.BackendAddress, "error", err)
 			return
 		}
-		if err := writeProxyV2(backend, connection.client); err != nil {
+		var err error
+		if edgeMetadata != nil {
+			err = writeProxyV2Addresses(backend, edgeMetadata.Source, edgeMetadata.Destination)
+		} else {
+			err = writeProxyV2(backend, connection.client)
+		}
+		if err != nil {
 			s.dialFailures.Add(1)
 			s.logger.Warn("PROXY protocol header failed", "backend", s.config.BackendAddress, "error", err)
 			return
@@ -287,11 +316,70 @@ func (s *Splicer) serveConnection(connection *connection) {
 		}
 	}
 
-	client := &idleConn{Conn: connection.client, timeout: s.config.IdleTimeout}
+	client = &idleConn{Conn: client, timeout: s.config.IdleTimeout}
 	upstream := &idleConn{Conn: backend, timeout: s.config.IdleTimeout}
-	if err := splice(client, upstream); err != nil {
+	if err := Bridge(client, upstream); err != nil {
 		s.logger.Debug("connection closed with error", "client", connection.client.RemoteAddr(), "error", err)
 	}
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(buffer []byte) (int, error) {
+	return c.reader.Read(buffer)
+}
+
+func (c *bufferedConn) CloseRead() error {
+	if connection, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return connection.CloseRead()
+	}
+	return nil
+}
+
+func (c *bufferedConn) CloseWrite() error {
+	if connection, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return connection.CloseWrite()
+	}
+	return nil
+}
+
+func inspectEdgeHeader(connection net.Conn, serviceID string, verifier *edgeauth.Verifier, timeout time.Duration) (net.Conn, *edgeauth.Metadata, error) {
+	reader := bufio.NewReaderSize(connection, edgeauth.HeaderSize)
+	if err := connection.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, nil, err
+	}
+	prefix, err := reader.Peek(12)
+	buffered := &bufferedConn{Conn: connection, reader: reader}
+	if err != nil {
+		if resetErr := connection.SetReadDeadline(time.Time{}); resetErr != nil {
+			return nil, nil, resetErr
+		}
+		if timeoutError, ok := err.(net.Error); ok && timeoutError.Timeout() {
+			return buffered, nil, nil
+		}
+		return nil, nil, err
+	}
+	if !edgeauth.HasSignature(prefix) {
+		if err := connection.SetReadDeadline(time.Time{}); err != nil {
+			return nil, nil, err
+		}
+		return buffered, nil, nil
+	}
+	header := make([]byte, edgeauth.HeaderSize)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return nil, nil, err
+	}
+	if err := connection.SetReadDeadline(time.Time{}); err != nil {
+		return nil, nil, err
+	}
+	metadata, err := verifier.Verify(serviceID, header)
+	if err != nil {
+		return nil, nil, err
+	}
+	return buffered, &metadata, nil
 }
 
 type connection struct {
@@ -363,7 +451,7 @@ func (c *idleConn) CloseWrite() error {
 	return nil
 }
 
-func splice(client, backend net.Conn) error {
+func Bridge(client, backend net.Conn) error {
 	errorsByDirection := make(chan error, 2)
 	go copyHalf(backend, client, errorsByDirection)
 	go copyHalf(client, backend, errorsByDirection)

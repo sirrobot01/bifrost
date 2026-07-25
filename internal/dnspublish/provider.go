@@ -6,6 +6,7 @@ import "context"
 type RecordType string
 
 const (
+	RecordA    RecordType = "A"
 	RecordAAAA RecordType = "AAAA"
 	RecordTXT  RecordType = "TXT"
 )

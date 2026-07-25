@@ -76,6 +76,16 @@ func TestDecodeAllowsObservedDirectAddress(t *testing.T) {
 	}
 }
 
+func TestDecodeRequiresSpliceForEdgeService(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(validConfig, "dns:\n", "edge:\n  enabled: true\n  ipv4_address: 8.8.8.8\n  key_file: /etc/bifrost/edge-key\ndns:\n", 1)
+	input = strings.Replace(input, "mode: splice", "mode: auto\n    edge: true", 1)
+	if _, err := Decode(strings.NewReader(input)); err == nil || !strings.Contains(err.Error(), "must use splice") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestReadSecretRejectsBroadPermissions(t *testing.T) {
 	t.Parallel()
 

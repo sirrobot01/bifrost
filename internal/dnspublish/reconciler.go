@@ -14,9 +14,10 @@ const ownershipPrefix = "bifrost-owner="
 
 // Publication is the complete desired DNS state for one service.
 type Publication struct {
-	Name      string
-	Addresses []netip.Addr
-	TTL       time.Duration
+	Name          string
+	Addresses     []netip.Addr
+	EdgeAddresses []netip.Addr
+	TTL           time.Duration
 }
 
 // Reconciler safely owns and updates DNS publications.
@@ -41,7 +42,7 @@ func NewReconciler(provider Provider, ownerID string) (*Reconciler, error) {
 	return &Reconciler{provider: provider, ownerID: ownerID}, nil
 }
 
-// Ensure reconciles an owned set of DNS-only AAAA records.
+// Ensure reconciles owned DNS-only address records.
 func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error {
 	publication, err := normalizePublication(publication)
 	if err != nil {
@@ -54,12 +55,16 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 	if err != nil {
 		return fmt.Errorf("list DNS ownership records: %w", err)
 	}
-	records, err := r.provider.List(ctx, publication.Name, RecordAAAA)
+	ipv6Records, err := r.provider.List(ctx, publication.Name, RecordAAAA)
 	if err != nil {
 		return fmt.Errorf("list AAAA records: %w", err)
 	}
+	ipv4Records, err := r.provider.List(ctx, publication.Name, RecordA)
+	if err != nil {
+		return fmt.Errorf("list A records: %w", err)
+	}
 
-	if err := verifyOwnership(markers, markerContent, len(records) > 0); err != nil {
+	if err := verifyOwnership(markers, markerContent, len(ipv6Records)+len(ipv4Records) > 0); err != nil {
 		return fmt.Errorf("publish %s: %w", publication.Name, err)
 	}
 	if len(markers) == 0 {
@@ -73,28 +78,34 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 		}
 	}
 
-	desired := make(map[string]struct{}, len(publication.Addresses))
-	for _, address := range publication.Addresses {
+	ttl := int(publication.TTL.Seconds())
+	if err := r.reconcileRecords(ctx, publication.Name, RecordAAAA, publication.Addresses, ttl, ipv6Records); err != nil {
+		return err
+	}
+	return r.reconcileRecords(ctx, publication.Name, RecordA, publication.EdgeAddresses, ttl, ipv4Records)
+}
+
+func (r *Reconciler) reconcileRecords(ctx context.Context, name string, recordType RecordType, addresses []netip.Addr, ttl int, records []Record) error {
+	desired := make(map[string]struct{}, len(addresses))
+	existing := make(map[string][]Record, len(records))
+	for _, address := range addresses {
 		desired[address.String()] = struct{}{}
 	}
-	existing := make(map[string][]Record, len(records))
 	for _, record := range records {
 		existing[record.Content] = append(existing[record.Content], record)
 	}
-
-	ttl := int(publication.TTL.Seconds())
-	for _, address := range publication.Addresses {
+	for _, address := range addresses {
 		content := address.String()
 		matching := existing[content]
 		if len(matching) == 0 {
 			if _, err := r.provider.Create(ctx, Record{
-				Type:    RecordAAAA,
-				Name:    publication.Name,
+				Type:    recordType,
+				Name:    name,
 				Content: content,
 				TTL:     ttl,
 				Proxied: false,
 			}); err != nil {
-				return fmt.Errorf("create AAAA record %s: %w", content, err)
+				return fmt.Errorf("create %s record %s: %w", recordType, content, err)
 			}
 			continue
 		}
@@ -104,12 +115,12 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 			primary.TTL = ttl
 			primary.Proxied = false
 			if err := r.provider.Update(ctx, primary); err != nil {
-				return fmt.Errorf("update AAAA record %s: %w", content, err)
+				return fmt.Errorf("update %s record %s: %w", recordType, content, err)
 			}
 		}
 		for _, duplicate := range matching[1:] {
 			if err := r.provider.Delete(ctx, duplicate.ID); err != nil {
-				return fmt.Errorf("delete duplicate AAAA record %s: %w", duplicate.ID, err)
+				return fmt.Errorf("delete duplicate %s record %s: %w", recordType, duplicate.ID, err)
 			}
 		}
 	}
@@ -119,7 +130,7 @@ func (r *Reconciler) Ensure(ctx context.Context, publication Publication) error 
 			continue
 		}
 		if err := r.provider.Delete(ctx, record.ID); err != nil {
-			return fmt.Errorf("delete stale AAAA record %s: %w", record.ID, err)
+			return fmt.Errorf("delete stale %s record %s: %w", recordType, record.ID, err)
 		}
 	}
 
@@ -160,7 +171,7 @@ func (r *Reconciler) Prune(ctx context.Context, desiredNames []string) error {
 	return nil
 }
 
-// Withdraw removes owned AAAA records before their ownership marker.
+// Withdraw removes owned address records before their ownership marker.
 func (r *Reconciler) Withdraw(ctx context.Context, name string) error {
 	name, err := normalizeName(name)
 	if err != nil {
@@ -180,13 +191,15 @@ func (r *Reconciler) Withdraw(ctx context.Context, name string) error {
 		return fmt.Errorf("withdraw %s: %w", name, err)
 	}
 
-	records, err := r.provider.List(ctx, name, RecordAAAA)
-	if err != nil {
-		return fmt.Errorf("list AAAA records: %w", err)
-	}
-	for _, record := range records {
-		if err := r.provider.Delete(ctx, record.ID); err != nil {
-			return fmt.Errorf("delete AAAA record %s: %w", record.ID, err)
+	for _, recordType := range []RecordType{RecordAAAA, RecordA} {
+		records, err := r.provider.List(ctx, name, recordType)
+		if err != nil {
+			return fmt.Errorf("list %s records: %w", recordType, err)
+		}
+		for _, record := range records {
+			if err := r.provider.Delete(ctx, record.ID); err != nil {
+				return fmt.Errorf("delete %s record %s: %w", recordType, record.ID, err)
+			}
 		}
 	}
 	for _, marker := range markers {
@@ -223,6 +236,18 @@ func normalizePublication(publication Publication) (Publication, error) {
 		publication.Addresses = append(publication.Addresses, address)
 	}
 	slices.SortFunc(publication.Addresses, netip.Addr.Compare)
+	edgeAddresses := make(map[netip.Addr]struct{}, len(publication.EdgeAddresses))
+	for _, address := range publication.EdgeAddresses {
+		if !address.IsValid() || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+			return Publication{}, fmt.Errorf("edge DNS address %s is not a public IPv4 address", address)
+		}
+		edgeAddresses[address] = struct{}{}
+	}
+	publication.EdgeAddresses = make([]netip.Addr, 0, len(edgeAddresses))
+	for address := range edgeAddresses {
+		publication.EdgeAddresses = append(publication.EdgeAddresses, address)
+	}
+	slices.SortFunc(publication.EdgeAddresses, netip.Addr.Compare)
 	return publication, nil
 }
 
@@ -251,7 +276,7 @@ func ownershipName(name string) string {
 func verifyOwnership(markers []Record, expected string, recordsExist bool) error {
 	if len(markers) == 0 {
 		if recordsExist {
-			return errors.New("existing AAAA records have no Bifrost ownership marker")
+			return errors.New("existing address records have no Bifrost ownership marker")
 		}
 		return nil
 	}

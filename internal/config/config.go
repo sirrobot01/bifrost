@@ -27,6 +27,7 @@ type Config struct {
 	Probe          Probe           `yaml:"probe"`
 	Metrics        Metrics         `yaml:"metrics"`
 	Docker         Docker          `yaml:"docker"`
+	Edge           Edge            `yaml:"edge"`
 	StaticServices []StaticService `yaml:"static_services"`
 }
 
@@ -77,6 +78,14 @@ type Metrics struct {
 type Docker struct {
 	Enabled bool   `yaml:"enabled"`
 	Socket  string `yaml:"socket"`
+}
+
+type Edge struct {
+	Enabled       bool     `yaml:"enabled"`
+	IPv4Address   string   `yaml:"ipv4_address,omitempty"`
+	KeyFile       string   `yaml:"key_file,omitempty"`
+	MaxClockSkew  Duration `yaml:"max_clock_skew"`
+	HeaderTimeout Duration `yaml:"header_timeout"`
 }
 
 type StaticService struct {
@@ -131,6 +140,12 @@ func (c *Config) ApplyDefaults() {
 	if c.Docker.Socket == "" {
 		c.Docker.Socket = "/var/run/docker.sock"
 	}
+	if c.Edge.MaxClockSkew == 0 {
+		c.Edge.MaxClockSkew = Duration(30 * time.Second)
+	}
+	if c.Edge.HeaderTimeout == 0 {
+		c.Edge.HeaderTimeout = Duration(250 * time.Millisecond)
+	}
 	for index := range c.StaticServices {
 		if c.StaticServices[index].Mode == "" {
 			c.StaticServices[index].Mode = "auto"
@@ -184,6 +199,14 @@ func (c Config) Validate() error {
 	}
 	if c.Docker.Enabled && c.Docker.Socket == "" {
 		return errors.New("docker.socket is required when Docker discovery is enabled")
+	}
+	if err := c.Edge.validate(); err != nil {
+		return fmt.Errorf("edge: %w", err)
+	}
+	for _, service := range c.StaticServices {
+		if service.Edge && !c.Edge.Enabled {
+			return fmt.Errorf("service %q enables edge publication but edge.enabled is false", service.Name)
+		}
 	}
 	return validateServices(c.StaticServices)
 }
@@ -257,6 +280,23 @@ func (m Metrics) validate() error {
 	return nil
 }
 
+func (e Edge) validate() error {
+	if !e.Enabled {
+		return nil
+	}
+	address, err := netip.ParseAddr(e.IPv4Address)
+	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+		return errors.New("ipv4_address must be public IPv4 when edge is enabled")
+	}
+	if e.KeyFile == "" {
+		return errors.New("key_file is required when edge is enabled")
+	}
+	if e.MaxClockSkew.Duration() <= 0 || e.HeaderTimeout.Duration() <= 0 {
+		return errors.New("max_clock_skew and header_timeout must be positive")
+	}
+	return nil
+}
+
 func validateServices(services []StaticService) error {
 	seenNames := make(map[string]struct{}, len(services))
 	seenSockets := make(map[string]string, len(services))
@@ -297,6 +337,9 @@ func (s StaticService) Validate() error {
 		if !backend.Addr().Is6() || backend.Port() != s.Listen || backend.Addr().IsPrivate() {
 			return errors.New("direct mode requires an IPv6 backend whose port matches listen")
 		}
+	}
+	if s.Edge && s.Mode != "splice" {
+		return errors.New("edge-enabled services must use splice mode in v1")
 	}
 	if s.PublicAddress != "" {
 		address, err := netip.ParseAddr(s.PublicAddress)

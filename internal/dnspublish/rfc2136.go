@@ -173,6 +173,11 @@ func recordsFromRRs(resources []dns.RR, recordType RecordType) []Record {
 	for _, resource := range resources {
 		var content string
 		switch value := resource.(type) {
+		case *dns.A:
+			if recordType != RecordA {
+				continue
+			}
+			content = value.A.String()
 		case *dns.AAAA:
 			if recordType != RecordAAAA {
 				continue
@@ -196,6 +201,12 @@ func recordsFromRRs(resources []dns.RR, recordType RecordType) []Record {
 func resourceRecord(record Record) (dns.RR, error) {
 	header := dns.RR_Header{Name: dns.Fqdn(record.Name), Rrtype: dnsType(record.Type), Class: dns.ClassINET, Ttl: uint32(record.TTL)}
 	switch record.Type {
+	case RecordA:
+		address := net.ParseIP(record.Content)
+		if address == nil || address.To4() == nil {
+			return nil, errors.New("RFC 2136 A content is invalid")
+		}
+		return &dns.A{Hdr: header, A: address.To4()}, nil
 	case RecordAAAA:
 		address := net.ParseIP(record.Content)
 		if address == nil || address.To4() != nil {
@@ -210,6 +221,9 @@ func resourceRecord(record Record) (dns.RR, error) {
 }
 
 func dnsType(recordType RecordType) uint16 {
+	if recordType == RecordA {
+		return dns.TypeA
+	}
 	if recordType == RecordTXT {
 		return dns.TypeTXT
 	}

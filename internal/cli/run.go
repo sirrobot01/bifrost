@@ -17,6 +17,7 @@ import (
 
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/diagnose"
+	"github.com/sirrobot01/bifrost/internal/edge"
 	"github.com/sirrobot01/bifrost/internal/observability"
 )
 
@@ -49,6 +50,8 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 		err = r.runStatus(ctx, arguments[1:])
 	case "serve":
 		err = r.runServe(ctx, arguments[1:])
+	case "edge":
+		err = r.runEdge(ctx, arguments[1:])
 	case "version":
 		_, err = fmt.Fprintln(r.Stdout, r.Version)
 	case "help", "-h", "--help":
@@ -61,6 +64,37 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 		return 1
 	}
 	return code
+}
+
+func (r Runner) runEdge(ctx context.Context, arguments []string) error {
+	flags := flag.NewFlagSet("edge", flag.ContinueOnError)
+	flags.SetOutput(r.Stderr)
+	configPath := flags.String("config", "/etc/bifrost/edge.yaml", "edge config file")
+	logFormat := flags.String("log-format", "json", "json or text")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("edge accepts flags only")
+	}
+	var handler slog.Handler
+	switch *logFormat {
+	case "json":
+		handler = slog.NewJSONHandler(r.Stderr, nil)
+	case "text":
+		handler = slog.NewTextHandler(r.Stderr, nil)
+	default:
+		return errors.New("log-format must be json or text")
+	}
+	configFile, err := edge.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	server, err := edge.NewServer(configFile, nil, slog.New(handler))
+	if err != nil {
+		return err
+	}
+	return server.Run(ctx)
 }
 
 func (r Runner) runServe(ctx context.Context, arguments []string) error {
@@ -294,7 +328,7 @@ func (r Runner) writeLiveStatus(ctx context.Context, configFile config.Config, j
 }
 
 func (r Runner) usage() {
-	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <init|check|serve|status|version> [flags]")
+	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <init|check|edge|serve|status|version> [flags]")
 }
 
 func discoverInterface() (string, error) {

@@ -19,10 +19,14 @@ func servicesFromConfig(configFile config.Config) ([]Service, error) {
 			ListenPort:     configured.Listen,
 			Backend:        netip.MustParseAddrPort(configured.Backend),
 			ProxyProtocol:  configured.ProxyProtocol,
+			Edge:           configured.Edge,
 			MaxConnections: 1024,
 		}
 		if configured.PublicAddress != "" {
 			service.PublicAddress = netip.MustParseAddr(configured.PublicAddress)
+		}
+		if configured.Edge {
+			service.EdgeAddress = netip.MustParseAddr(configFile.Edge.IPv4Address)
 		}
 		if err := service.validate(); err != nil {
 			return nil, fmt.Errorf("service %q: %w", service.ID, err)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
+	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"github.com/sirrobot01/bifrost/internal/exposure"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
@@ -49,6 +50,7 @@ type ServiceStatus struct {
 	DNSName           string         `json:"dns"`
 	Mode              Mode           `json:"mode"`
 	Addresses         []netip.Addr   `json:"addresses"`
+	EdgeAddresses     []netip.Addr   `json:"edge_addresses,omitempty"`
 	Backend           netip.AddrPort `json:"backend"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
 	ActiveConnections int64          `json:"active_connections"`
@@ -58,19 +60,21 @@ type ServiceStatus struct {
 }
 
 type ControllerConfig struct {
-	Addresses      AddressManager
-	Deriver        serviceaddr.Deriver
-	Publisher      Publisher
-	Listen         ListenerFactory
-	TTL            time.Duration
-	DrainGrace     time.Duration
-	DialTimeout    time.Duration
-	IdleTimeout    time.Duration
-	Logger         *slog.Logger
-	Now            func() time.Time
-	CheckDirect    func(context.Context, netip.AddrPort) error
-	PrefixOverride netip.Prefix
-	GlobalLimiter  *exposure.Limiter
+	Addresses         AddressManager
+	Deriver           serviceaddr.Deriver
+	Publisher         Publisher
+	Listen            ListenerFactory
+	TTL               time.Duration
+	DrainGrace        time.Duration
+	DialTimeout       time.Duration
+	IdleTimeout       time.Duration
+	Logger            *slog.Logger
+	Now               func() time.Time
+	CheckDirect       func(context.Context, netip.AddrPort) error
+	PrefixOverride    netip.Prefix
+	GlobalLimiter     *exposure.Limiter
+	EdgeVerifier      *edgeauth.Verifier
+	EdgeHeaderTimeout time.Duration
 }
 
 type Controller struct {
@@ -127,6 +131,9 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	for _, service := range desired {
 		if err := service.validate(); err != nil {
 			return nil, fmt.Errorf("service %q: %w", service.ID, err)
+		}
+		if service.Edge && c.config.EdgeVerifier == nil {
+			return nil, fmt.Errorf("service %q: edge authentication verifier is required", service.ID)
 		}
 		if _, exists := indexed[service.ID]; exists {
 			return nil, fmt.Errorf("duplicate service %q", service.ID)
@@ -209,7 +216,7 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 		}
 		addresses := append(current.addresses(), newEndpoint.address)
 		addresses = uniqueAddresses(addresses)
-		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: addresses, TTL: c.config.TTL}); err != nil {
+		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: addresses, EdgeAddresses: edgeAddresses(service), TTL: c.config.TTL}); err != nil {
 			_ = c.teardownEndpoint(context.WithoutCancel(ctx), newEndpoint)
 			return actions, fmt.Errorf("publish service %q: %w", id, err)
 		}
@@ -232,6 +239,7 @@ func (c *Controller) Status() []ServiceStatus {
 	statuses := make([]ServiceStatus, 0, len(c.services))
 	for _, state := range c.services {
 		status := ServiceStatus{ID: state.spec.ID, DNSName: state.spec.DNSName, Mode: state.mode, Backend: state.spec.Backend, ClientIPPreserved: state.mode == ModeDirect}
+		status.EdgeAddresses = edgeAddresses(state.spec)
 		for _, endpoint := range state.endpoints {
 			status.Addresses = append(status.Addresses, endpoint.address)
 			if endpoint.splicer != nil {
@@ -341,15 +349,18 @@ func (c *Controller) prepareEndpoint(ctx context.Context, service Service, mode 
 	result.address = lease.Prefix.Addr()
 	result.lease = &lease
 	listener, err := c.config.Listen(ctx, exposure.Config{
-		ServiceID:      service.ID,
-		ListenAddress:  netip.AddrPortFrom(result.address, service.ListenPort),
-		BackendAddress: service.Backend,
-		MaxConnections: service.MaxConnections,
-		DialTimeout:    c.config.DialTimeout,
-		IdleTimeout:    c.config.IdleTimeout,
-		ProxyProtocol:  service.ProxyProtocol,
-		GlobalLimiter:  c.config.GlobalLimiter,
-		Logger:         c.config.Logger,
+		ServiceID:         service.ID,
+		ListenAddress:     netip.AddrPortFrom(result.address, service.ListenPort),
+		BackendAddress:    service.Backend,
+		MaxConnections:    service.MaxConnections,
+		DialTimeout:       c.config.DialTimeout,
+		IdleTimeout:       c.config.IdleTimeout,
+		ProxyProtocol:     service.ProxyProtocol,
+		GlobalLimiter:     c.config.GlobalLimiter,
+		EdgeVerifier:      edgeVerifier(c.config.EdgeVerifier, service.Edge),
+		EdgeHeaderTimeout: c.config.EdgeHeaderTimeout,
+		EdgeIdentity:      service.DNSName,
+		Logger:            c.config.Logger,
 	})
 	if err != nil {
 		_ = c.config.Addresses.Remove(lease)
@@ -379,7 +390,7 @@ func (c *Controller) retireExpired(ctx context.Context) error {
 		if len(retire) == 0 {
 			continue
 		}
-		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: state.spec.DNSName, Addresses: endpointAddresses(keep), TTL: c.config.TTL}); err != nil {
+		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: state.spec.DNSName, Addresses: endpointAddresses(keep), EdgeAddresses: edgeAddresses(state.spec), TTL: c.config.TTL}); err != nil {
 			return err
 		}
 		for _, endpoint := range retire {
@@ -474,4 +485,18 @@ func endpointAddresses(endpoints []*endpoint) []netip.Addr {
 func uniqueAddresses(addresses []netip.Addr) []netip.Addr {
 	slices.SortFunc(addresses, netip.Addr.Compare)
 	return slices.Compact(addresses)
+}
+
+func edgeAddresses(service Service) []netip.Addr {
+	if service.Edge {
+		return []netip.Addr{service.EdgeAddress}
+	}
+	return nil
+}
+
+func edgeVerifier(verifier *edgeauth.Verifier, enabled bool) *edgeauth.Verifier {
+	if enabled {
+		return verifier
+	}
+	return nil
 }

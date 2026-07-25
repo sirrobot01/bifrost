@@ -18,6 +18,7 @@ type Service struct {
 	DNSName           string         `json:"dns"`
 	Mode              string         `json:"mode"`
 	Addresses         []netip.Addr   `json:"addresses"`
+	EdgeAddresses     []netip.Addr   `json:"edge_addresses,omitempty"`
 	Backend           netip.AddrPort `json:"backend"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
 	ActiveConnections int64          `json:"active_connections"`

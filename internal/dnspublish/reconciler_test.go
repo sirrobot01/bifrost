@@ -123,6 +123,28 @@ func TestReconcilerEnsureAddsBeforeRemovingDuringRotation(t *testing.T) {
 	}
 }
 
+func TestReconcilerPublishesEdgeARecord(t *testing.T) {
+	t.Parallel()
+
+	provider := &memoryProvider{}
+	reconciler, err := NewReconciler(provider, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Ensure(t.Context(), Publication{
+		Name:          "media.example.com",
+		Addresses:     []netip.Addr{netip.MustParseAddr("2001:db8::1")},
+		EdgeAddresses: []netip.Addr{netip.MustParseAddr("192.0.2.20")},
+		TTL:           time.Minute,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"create:TXT:bifrost-owner=host-1", "create:AAAA:2001:db8::1", "create:A:192.0.2.20"}
+	if !slices.Equal(provider.events, want) {
+		t.Fatalf("events = %v, want %v", provider.events, want)
+	}
+}
+
 func TestReconcilerEnsureCorrectsRecordSettings(t *testing.T) {
 	t.Parallel()
 
