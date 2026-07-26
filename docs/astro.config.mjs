@@ -14,18 +14,33 @@ export default defineConfig({
         src: './src/assets/bifrost-logo.svg',
         alt: 'Bifrost',
       },
+      // Starlight already emits og:title, og:description, og:url and og:type.
+      // Only the card image needs supplying. It is rendered from
+      // src/assets/bifrost-og.svg at the 1200x630 that large cards expect.
       head: [
         {
           tag: 'meta',
-          attrs: { property: 'og:image', content: 'https://bifrost.biodun.dev/bifrost-logo-512.png' },
+          attrs: { property: 'og:image', content: 'https://bifrost.biodun.dev/bifrost-og.png' },
         },
         {
           tag: 'meta',
-          attrs: { name: 'twitter:card', content: 'summary' },
+          attrs: { property: 'og:image:width', content: '1200' },
         },
         {
           tag: 'meta',
-          attrs: { name: 'twitter:image', content: 'https://bifrost.biodun.dev/bifrost-logo-512.png' },
+          attrs: { property: 'og:image:height', content: '630' },
+        },
+        {
+          tag: 'meta',
+          attrs: { property: 'og:image:alt', content: 'Bifrost — IPv6-native ingress for self-hosted services' },
+        },
+        {
+          tag: 'meta',
+          attrs: { name: 'twitter:card', content: 'summary_large_image' },
+        },
+        {
+          tag: 'meta',
+          attrs: { name: 'twitter:image', content: 'https://bifrost.biodun.dev/bifrost-og.png' },
         },
       ],
       lastUpdated: true,

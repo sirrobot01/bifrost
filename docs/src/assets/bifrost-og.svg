@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#1F1A16"/>
+
+  <!-- gopher mark, source viewBox 0 0 120 120 scaled 2.6x -->
+  <g transform="translate(71,75) scale(3.2)">
+    <path d="M24 100 A36 12 0 0 1 96 100" fill="none" stroke="#E56B5D" stroke-width="4.5" stroke-linecap="round"/>
+    <path d="M38 100 A22 6 0 0 1 82 100" fill="none" stroke="#4FA893" stroke-width="4.5" stroke-linecap="round"/>
+    <ellipse cx="60" cy="100" rx="17" ry="4.5" fill="#3a322b"/>
+    <ellipse cx="60" cy="84" rx="23" ry="24" fill="#9A8270"/>
+    <ellipse cx="60" cy="62" rx="25" ry="21" fill="#9A8270"/>
+    <circle cx="39" cy="47" r="5" fill="#9A8270"/><circle cx="39" cy="47" r="2.4" fill="#7d685a"/>
+    <circle cx="81" cy="47" r="5" fill="#9A8270"/><circle cx="81" cy="47" r="2.4" fill="#7d685a"/>
+    <ellipse cx="49" cy="72" rx="10" ry="8" fill="#CDBCAB"/>
+    <ellipse cx="71" cy="72" rx="10" ry="8" fill="#CDBCAB"/>
+    <circle cx="49" cy="58" r="3.6" fill="#2b2622"/><circle cx="50.2" cy="56.8" r="1.2" fill="#fff"/>
+    <circle cx="71" cy="58" r="3.6" fill="#2b2622"/><circle cx="72.2" cy="56.8" r="1.2" fill="#fff"/>
+    <ellipse cx="60" cy="66.5" rx="4.2" ry="3" fill="#D98A80"/>
+    <g stroke="#b9a795" stroke-width="1.4" stroke-linecap="round" opacity="0.75">
+      <line x1="40" y1="69" x2="24" y2="65"/><line x1="40" y1="73" x2="23" y2="73"/>
+      <line x1="80" y1="69" x2="96" y2="65"/><line x1="80" y1="73" x2="97" y2="73"/>
+    </g>
+    <rect x="54.2" y="75" width="5.3" height="10.5" rx="2.2" fill="#fff"/>
+    <rect x="60.5" y="75" width="5.3" height="10.5" rx="2.2" fill="#fff"/>
+    <path d="M24 100 A36 12 0 0 0 96 100" fill="none" stroke="#E56B5D" stroke-width="4.5" stroke-linecap="round"/>
+    <path d="M38 100 A22 6 0 0 0 82 100" fill="none" stroke="#4FA893" stroke-width="4.5" stroke-linecap="round"/>
+    <ellipse cx="46" cy="97" rx="6.5" ry="4.5" fill="#CDBCAB"/>
+    <ellipse cx="74" cy="97" rx="6.5" ry="4.5" fill="#CDBCAB"/>
+    <g stroke="#9A8270" stroke-width="1.3" stroke-linecap="round">
+      <line x1="44" y1="94" x2="44" y2="99"/><line x1="47.5" y1="94" x2="47.5" y2="99"/>
+      <line x1="72" y1="94" x2="72" y2="99"/><line x1="75.5" y1="94" x2="75.5" y2="99"/>
+    </g>
+  </g>
+
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+    <text x="456" y="324" fill="#f2ede6" font-size="118" font-weight="bold" letter-spacing="-2">Bifrost</text>
+    <text x="460" y="384" fill="#b9a795" font-size="31">IPv6-native ingress for self-hosted services</text>
+  </g>
+
+  <!-- bridge -->
+  <rect x="0" y="618" width="1200" height="12" fill="url(#bridge)"/>
+  <defs>
+    <linearGradient id="bridge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E56B5D"/>
+      <stop offset="1" stop-color="#4FA893"/>
+    </linearGradient>
+  </defs>
+</svg>
