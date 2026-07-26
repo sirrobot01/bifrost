@@ -1,4 +1,10 @@
-# Bifrost
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/bifrost-lockup-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/src/assets/bifrost-lockup-light.png">
+    <img alt="Bifrost" src="docs/src/assets/bifrost-lockup-light.png" width="360">
+  </picture>
+</p>
 
 Bifrost publishes self-hosted TCP services through native IPv6. It is for Linux hosts that have public IPv6 and use CGNAT for IPv4.
 
