@@ -369,7 +369,7 @@ func writeInitNextSteps(prompt *prompter, configPath string, service config.Stat
 		_ = prompt.say("These files are owned by the current user. If Bifrost runs as the %s account, chown them to it.", serviceAccount)
 	}
 	_ = prompt.say("")
-	_ = prompt.say("Your router must forward inbound IPv6 TCP %d to this host before %s answers.", service.Listen, service.DNSName)
+	_ = prompt.say("Your router must permit inbound IPv6 TCP %d to this host before %s answers.", service.Listen, service.DNSName)
 	_ = prompt.say("")
 	_ = prompt.say("Next:")
 	_ = prompt.say("  sudo bifrost serve --config %s --dry-run   # review the planned changes", configPath)

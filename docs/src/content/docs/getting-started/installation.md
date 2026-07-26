@@ -26,7 +26,7 @@ Fedora, RHEL, and openSUSE:
 
 ```sh
 curl -fsSLO https://github.com/sirrobot01/bifrost/releases/latest/download/bifrost_linux_amd64.rpm
-sudo rpm -i ./bifrost_linux_amd64.rpm
+sudo dnf install -y ./bifrost_linux_amd64.rpm
 ```
 
 The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0750`, and installs both systemd units.

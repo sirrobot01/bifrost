@@ -73,7 +73,7 @@ Describe the first service to publish. More can be added later in /etc/bifrost/c
 Service name [myservice]: jellyfin
 Public DNS name (for example media.example.com): media.example.com
 Address the service already listens on [127.0.0.1:8096]:
-Public port clients connect to [443]:
+Public port clients connect to [443]: 8096
   direct mode is unavailable: it needs the backend to own the public IPv6 address
 Service mode (auto/splice) [auto]:
 
@@ -95,11 +95,13 @@ The Cloudflare token needs `Zone:Read` and `DNS:Edit` on the zone that serves yo
 
 Nothing is written until you answer the last question.
 
+The public port is 8096, not 443, because this publishes Jellyfin's plain HTTP listener and Bifrost does not terminate TLS. To serve `https://media.example.com` on 443, put a TLS server in front of Jellyfin and publish that instead. See [Jellyfin](../../applications/jellyfin/).
+
 ## 4. Permit inbound IPv6 on the router
 
 Bifrost cannot do this for you, and the published name will not answer until it is done.
 
-Add an inbound rule permitting TCP 443 to the address Bifrost publishes. Routers differ; the rule is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host.
+Add an inbound rule permitting TCP 8096 to the address Bifrost publishes. Routers differ; the rule is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host.
 
 Also permit ICMPv6 types 1 to 4. Blocking them breaks path MTU discovery, which produces connections that open and then stall. See [firewall](../../networking/firewall/).
 
@@ -128,8 +130,10 @@ sudo bifrost check --config /etc/bifrost/config.yaml
 From an IPv6 client elsewhere:
 
 ```sh
-curl -6 -sI https://media.example.com/
+curl -6 -sI http://media.example.com:8096/
 ```
+
+The URL uses `http` and the public port because the example publishes Jellyfin's plain HTTP listener.
 
 ## What you have now
 
