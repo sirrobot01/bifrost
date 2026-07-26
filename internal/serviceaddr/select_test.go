@@ -1,8 +1,10 @@
 package serviceaddr
 
 import (
+	"errors"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,7 +78,47 @@ func TestSelectPrefixRejectsEmptyCandidateSet(t *testing.T) {
 		{Prefix: netip.MustParsePrefix("2001:db8:1::1/64"), Temporary: true},
 	}
 
-	if _, err := SelectPrefix(candidates, netip.Prefix{}, time.Time{}); err == nil {
+	_, err := SelectPrefix(candidates, netip.Prefix{}, time.Time{})
+	if err == nil {
 		t.Fatal("SelectPrefix succeeded without an eligible prefix")
+	}
+
+	var noPrefix *NoEligiblePrefixError
+	if !errors.As(err, &noPrefix) {
+		t.Fatalf("error = %T, want *NoEligiblePrefixError", err)
+	}
+	if noPrefix.Examined != 2 {
+		t.Fatalf("examined = %d, want 2", noPrefix.Examined)
+	}
+	if noPrefix.Rejected[RejectionTemporary] != 1 || noPrefix.Rejected[RejectionNotGlobalUnicast] != 1 {
+		t.Fatalf("rejections = %v, want one temporary and one non-global", noPrefix.Rejected)
+	}
+	// A temporary address is the actionable finding here, so the remediation
+	// must point at privacy extensions rather than at the missing prefix.
+	if !strings.Contains(noPrefix.Remediation(), "use_tempaddr") {
+		t.Fatalf("remediation = %q, want privacy extension guidance", noPrefix.Remediation())
+	}
+	if !strings.Contains(err.Error(), "1 a temporary privacy address") {
+		t.Fatalf("error = %q, want the rejection counts", err)
+	}
+}
+
+func TestSelectPrefixReportsAbsentIPv6(t *testing.T) {
+	t.Parallel()
+
+	_, err := SelectPrefix(nil, netip.Prefix{}, time.Time{})
+	if err == nil {
+		t.Fatal("SelectPrefix succeeded with no candidates")
+	}
+
+	var noPrefix *NoEligiblePrefixError
+	if !errors.As(err, &noPrefix) {
+		t.Fatalf("error = %T, want *NoEligiblePrefixError", err)
+	}
+	if !strings.Contains(err.Error(), "no IPv6 addresses are present") {
+		t.Fatalf("error = %q, want the absent-address message", err)
+	}
+	if !strings.Contains(noPrefix.Remediation(), "delegates a routed IPv6 prefix") {
+		t.Fatalf("remediation = %q, want delegation guidance", noPrefix.Remediation())
 	}
 }
