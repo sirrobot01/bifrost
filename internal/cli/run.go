@@ -196,6 +196,9 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 		err = writeJSON(r.Stdout, report)
 	} else {
 		err = writeFindings(r.Stdout, report)
+		if err == nil {
+			err = writeCheckSummary(r.Stdout, report)
+		}
 	}
 	if err != nil {
 		return 0, err
@@ -336,29 +339,6 @@ func defaultOwnerID() string {
 		}
 	}
 	return result.String()
-}
-
-// findingIndent aligns continuation lines under the summary column produced by
-// the severity and check widths below.
-const findingIndent = "                    "
-
-func writeFindings(writer io.Writer, report diagnose.Report) error {
-	for _, finding := range report.Findings {
-		if _, err := fmt.Fprintf(writer, "%-7s %-11s %s\n", strings.ToUpper(string(finding.Severity)), finding.Check, finding.Summary); err != nil {
-			return err
-		}
-		if finding.Detail != "" {
-			if _, err := fmt.Fprintf(writer, "%s%s\n", findingIndent, finding.Detail); err != nil {
-				return err
-			}
-		}
-		if finding.Remediation != "" {
-			if _, err := fmt.Fprintf(writer, "%sfix: %s\n", findingIndent, finding.Remediation); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func writeJSON(writer io.Writer, value any) error {

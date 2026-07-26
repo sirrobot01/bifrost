@@ -113,15 +113,7 @@ func blockedReport(finding diagnose.Finding) diagnose.Report {
 }
 
 func writeDoctorSummary(writer io.Writer, report diagnose.Report) error {
-	var errorCount, warningCount int
-	for _, finding := range report.Findings {
-		switch finding.Severity {
-		case diagnose.SeverityError:
-			errorCount++
-		case diagnose.SeverityWarning:
-			warningCount++
-		}
-	}
+	errorCount, warningCount := severityCounts(report)
 	if errorCount > 0 {
 		summary := fmt.Sprintf("\n%s must be fixed before Bifrost can publish a service", pluralize(errorCount, "problem"))
 		if warningCount > 0 {

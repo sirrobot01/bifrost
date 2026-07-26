@@ -68,11 +68,15 @@ ip -6 route show default
 
 Use `--offline` to skip this and every other check that leaves the host.
 
-### `firewall` and `icmpv6`
+### `firewall`
 
 Bifrost reads nftables and reports an authoritative input chain that could drop inbound IPv6. It does not change firewall rules in v1; `firewall.mode` is advisory.
 
 Add service-scoped accepts to whichever firewall manager owns the policy. A separate Bifrost table cannot override another table's drop. See [firewall](../../networking/firewall/).
+
+### `icmpv6`
+
+Essential ICMPv6 error traffic may be blocked. Path MTU discovery needs Destination Unreachable (1), Packet Too Big (2), Time Exceeded (3), and Parameter Problem (4); blocking them produces connections that open and then stall. Add scoped accepts for those types in the firewall manager that owns the policy. See [firewall](../../networking/firewall/).
 
 ### `docker`
 
