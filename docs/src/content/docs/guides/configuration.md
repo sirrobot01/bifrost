@@ -7,6 +7,28 @@ Bifrost reads strict YAML. Bifrost rejects unknown fields. Bifrost also rejects 
 
 Store each secret in a separate file. The file must be a regular file. Group and other users must not have access to it.
 
+## Create the files by hand
+
+`bifrost init --interactive` creates the configuration, the address secret, and the DNS credential with correct permissions. Prefer it.
+
+To write the files yourself, for example from a configuration manager, generate a template and fill it in:
+
+```sh
+sudo -u bifrost bifrost init --output /etc/bifrost/config.yaml
+```
+
+That template is not runnable. It has no service, no credential, no address secret, and a placeholder zone ID. You must also:
+
+```sh
+openssl rand -hex 32 | sudo -u bifrost tee /etc/bifrost/address-secret >/dev/null
+sudo -u bifrost install -m 0600 /dev/null /etc/bifrost/cloudflare-token
+sudoedit /etc/bifrost/cloudflare-token
+sudoedit /etc/bifrost/config.yaml
+sudo chmod 0600 /etc/bifrost/config.yaml /etc/bifrost/address-secret /etc/bifrost/cloudflare-token
+```
+
+Bifrost refuses any secret file readable by group or other. Review with `bifrost serve --dry-run` before the first start.
+
 ## Configure the home role
 
 Start with this file:

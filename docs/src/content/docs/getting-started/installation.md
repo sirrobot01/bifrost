@@ -1,29 +1,35 @@
 ---
 title: Install Bifrost
-description: Install from a package, an archive, or a container, and verify the release.
+description: The install script, the package and archive alternatives, release verification, and upgrades.
 ---
 
-For a first install, follow the [quickstart](../quickstart/) instead. This page covers every install method, release verification, and upgrades.
-
-Bifrost publishes Linux builds for these CPUs:
-
-| Suffix | CPU |
-|---|---|
-| `amd64`, `x86_64` | AMD64 or Intel 64 |
-| `arm64`, `aarch64` | ARM64 |
-| `armv7` | 32-bit ARM v7 |
-
-## Install with the script
+One command installs the latest release:
 
 ```sh
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-The script detects the CPU and package manager, downloads the matching deb or rpm from the latest release, verifies it against the release checksum file, and installs it. Where no package manager fits, it installs the archive binary to `/usr/local/bin` and points at the [archive steps](#install-from-an-archive) for the remaining setup.
+The script detects the CPU and package manager, verifies the download against the release checksum file, and installs the deb or rpm package. Where neither package manager exists, it installs the archive binary to `/usr/local/bin` and prints the remaining setup steps.
 
-The script does not verify the release signature, because cosign is rarely installed before Bifrost is. For a host you care about, [verify the release](#verify-a-release) and install the package yourself.
+The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0750`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
-## Install a package
+Continue with the [quickstart](../quickstart/) to check the host, create the configuration, and start the service.
+
+The rest of this page covers the alternatives to the script, release verification, and upgrades.
+
+## Install without the script
+
+Every method ends in the same place. Pick the one that fits how you manage the host.
+
+Builds cover three CPUs. Packages use the first suffix, archives the second:
+
+| CPU | Package suffix | Archive suffix |
+|---|---|---|
+| AMD64 or Intel 64 | `amd64` | `x86_64` |
+| ARM64 | `arm64` | `aarch64` |
+| 32-bit ARM v7 | `armv7` | `armv7` |
+
+### Download the package directly
 
 Debian and Ubuntu:
 
@@ -39,13 +45,9 @@ curl -fsSLO https://github.com/sirrobot01/bifrost/releases/latest/download/bifro
 sudo dnf install -y ./bifrost_linux_amd64.rpm
 ```
 
-The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0750`, and installs both systemd units.
+This is exactly what the script does, without the script. Removing the package leaves `/etc/bifrost` and the accounts in place: those files hold the address secret that derives your service addresses, and deleting them would change every address on reinstall.
 
-It does not enable or start anything. Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
-
-Removing the package leaves `/etc/bifrost` and the accounts in place. Those files hold the address secret that derives your service addresses, and deleting them would change every address on reinstall.
-
-## Install from an archive
+### Install from an archive
 
 Use this when no package fits your distribution.
 
@@ -66,13 +68,25 @@ sudo install -m 0644 deploy/bifrost.service /etc/systemd/system/bifrost.service
 sudo systemctl daemon-reload
 ```
 
-The shipped unit runs `/usr/local/bin/bifrost`. The packages install to `/usr/bin` and repoint the unit with a drop-in.
+The shipped unit runs `/usr/local/bin/bifrost`; the packages install to `/usr/bin` and repoint the unit with a drop-in. The unit grants `CAP_NET_ADMIN` for splice mode and `CAP_NET_BIND_SERVICE` for ports below 1024, and allows three minutes to stop; keep `TimeoutStopSec` longer than `drain_grace`.
 
-Then continue with `bifrost doctor` and `bifrost init --interactive` as in the [quickstart](../quickstart/).
+### Use the container
+
+The image at `ghcr.io/sirrobot01/bifrost` holds one static binary and CA certificates, and runs as UID and GID 65532. Use a fixed release tag in production.
+
+The home role needs the host network namespace and `NET_ADMIN`. The supplied Compose file sets both:
+
+```sh
+docker compose -f examples/compose.yaml up -d
+```
+
+That example mounts the Docker socket, which grants root-level control of the Docker host. Use a socket proxy when possible.
+
+Prefer the package or archive if you would rather not run a network-management container.
 
 ## Verify a release
 
-Do this before installing on anything you care about. Every release is signed with cosign through GitHub Actions, so a verified checksum proves the artifact came from this repository's release workflow.
+Do this before installing on anything you care about. Every release is signed with cosign through GitHub Actions, so a verified checksum proves the artifact came from this repository's release workflow. The install script checks the sha256 but not the signature, because cosign is rarely installed before Bifrost is.
 
 Download the artifact, `checksums.txt`, and `checksums.txt.sigstore.json` from the same release.
 
@@ -88,65 +102,9 @@ The first command proves who produced `checksums.txt`. The second proves your do
 
 Packages, archives, and container images are all covered by the same checksum file.
 
-## Use the container
-
-The image at `ghcr.io/sirrobot01/bifrost` holds one static binary and CA certificates, and runs as UID and GID 65532. Use a fixed release tag in production.
-
-The home role needs the host network namespace and `NET_ADMIN`. The supplied Compose file sets both:
-
-```sh
-docker compose -f examples/compose.yaml up -d
-```
-
-That example mounts the Docker socket, which grants root-level control of the Docker host. Use a socket proxy when possible.
-
-Prefer the package or archive if you would rather not run a network-management container.
-
-## Create the configuration by hand
-
-`bifrost init --interactive` creates the configuration, the address secret, and the DNS credential with correct permissions. Prefer it.
-
-To write the files yourself, generate a template and fill it in:
-
-```sh
-sudo -u bifrost bifrost init --output /etc/bifrost/config.yaml
-```
-
-That template is not runnable. It has no service, no credential, no address secret, and a placeholder zone ID. You must also:
-
-```sh
-openssl rand -hex 32 | sudo -u bifrost tee /etc/bifrost/address-secret >/dev/null
-sudo -u bifrost install -m 0600 /dev/null /etc/bifrost/cloudflare-token
-sudoedit /etc/bifrost/cloudflare-token
-sudoedit /etc/bifrost/config.yaml
-sudo chmod 0600 /etc/bifrost/config.yaml /etc/bifrost/address-secret /etc/bifrost/cloudflare-token
-```
-
-Bifrost refuses any secret file readable by group or other. The [configuration guide](../../guides/configuration/) describes every field.
-
-## Review before the first start
-
-```sh
-sudo -u bifrost bifrost status --offline --config /etc/bifrost/config.yaml
-sudo bifrost serve --config /etc/bifrost/config.yaml --dry-run
-```
-
-The first shows the selected prefix and the derived service addresses. The second shows the DNS records and host addresses Bifrost would change. Neither changes anything.
-
-Start the service only when the output is correct:
-
-```sh
-sudo systemctl enable --now bifrost
-systemctl status bifrost
-sudo bifrost check --config /etc/bifrost/config.yaml
-curl --fail http://127.0.0.1:9098/healthz
-```
-
-The unit grants `CAP_NET_ADMIN` for splice mode and `CAP_NET_BIND_SERVICE` for ports below 1024. It allows three minutes to stop; keep `TimeoutStopSec` longer than `drain_grace`.
-
 ## Upgrade Bifrost
 
-With a package, `apt-get install ./bifrost_*.deb` or `rpm -U` replaces the binary and leaves `/etc/bifrost` alone. Restart afterwards:
+With a package, installing the new deb or rpm replaces the binary and leaves `/etc/bifrost` alone. Restart afterwards:
 
 ```sh
 sudo systemctl restart bifrost
