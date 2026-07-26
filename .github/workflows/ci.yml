@@ -45,9 +45,17 @@ jobs:
         with:
           version: v2.17.0
           args: release --snapshot --clean --skip=sign
-      # The package is the shortest setup path, so install it for real rather
-      # than trusting that the archive contents look right.
-      - run: sudo apt-get install -y ./dist/*_linux_amd64.deb
+      # The hosted install script is the shortest setup path, so install
+      # through it for real, pointed at the snapshot artifacts. This covers
+      # arch detection, checksum verification, and the deb path in one step.
+      - name: Install through install.sh
+        run: |
+          set -eux
+          python3 -m http.server 8321 --directory dist >/dev/null 2>&1 &
+          server=$!
+          trap 'kill $server' EXIT
+          sleep 1
+          BIFROST_DOWNLOAD=http://127.0.0.1:8321 sh docs/public/install.sh
       - name: Verify the installed layout
         run: |
           set -eux
@@ -69,6 +77,19 @@ jobs:
           bifrost doctor --offline --json > report.json || test $? -eq 1
           jq -e '.findings | length > 0' report.json
       - run: sudo apt-get remove -y bifrost
+      # The script falls back to the archive where no package manager fits;
+      # exercise that path in a container with neither apt nor dnf.
+      - name: Smoke test the archive fallback
+        run: |
+          set -eux
+          python3 -m http.server 8321 --directory dist >/dev/null 2>&1 &
+          server=$!
+          trap 'kill $server' EXIT
+          sleep 1
+          docker run --rm --network host \
+            -v "$PWD/docs/public/install.sh:/install.sh:ro" \
+            -e BIFROST_DOWNLOAD=http://127.0.0.1:8321 \
+            alpine sh -c 'sh /install.sh && /usr/local/bin/bifrost version'
 
   docs:
     runs-on: ubuntu-latest

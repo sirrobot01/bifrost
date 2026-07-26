@@ -14,7 +14,9 @@
 set -eu
 
 REPO="sirrobot01/bifrost"
-DOWNLOAD="https://github.com/$REPO/releases/latest/download"
+# BIFROST_DOWNLOAD overrides the release download base. CI uses it to run this
+# script against locally built artifacts before they are published.
+DOWNLOAD="${BIFROST_DOWNLOAD:-https://github.com/$REPO/releases/latest/download}"
 
 fail() {
 	echo "install.sh: $*" >&2
