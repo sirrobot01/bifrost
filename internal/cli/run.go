@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -23,8 +22,11 @@ import (
 )
 
 type Runner struct {
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Stdout io.Writer
+	Stderr io.Writer
+	// Stdin answers interactive prompts. It is an *os.File because hiding
+	// typed secrets needs the underlying terminal descriptor.
+	Stdin   *os.File
 	Version string
 }
 
@@ -35,6 +37,9 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 	if r.Stderr == nil {
 		r.Stderr = os.Stderr
 	}
+	if r.Stdin == nil {
+		r.Stdin = os.Stdin
+	}
 	if len(arguments) == 0 {
 		r.usage()
 		return 2
@@ -44,7 +49,9 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 	var err error
 	switch arguments[0] {
 	case "init":
-		err = r.runInit(arguments[1:])
+		err = r.runInit(ctx, arguments[1:])
+	case "doctor":
+		code, err = r.runDoctor(ctx, arguments[1:])
 	case "check":
 		code, err = r.runCheck(ctx, arguments[1:])
 	case "status":
@@ -124,72 +131,6 @@ func (r Runner) runServe(ctx context.Context, arguments []string) error {
 		return err
 	}
 	return platformServe(ctx, configFile, *dryRun, slog.New(handler), r.Stdout)
-}
-
-func (r Runner) runInit(arguments []string) error {
-	flags := flag.NewFlagSet("init", flag.ContinueOnError)
-	flags.SetOutput(r.Stderr)
-	interfaceName := flags.String("interface", "", "publication interface; auto-detected when unambiguous")
-	output := flags.String("output", "-", "config output path or - for stdout")
-	force := flags.Bool("force", false, "replace an existing output file")
-	ownerID := flags.String("owner-id", defaultOwnerID(), "DNS ownership identity")
-	secretFile := flags.String("secret-file", "/etc/bifrost/address-secret", "host address-derivation secret")
-	zoneID := flags.String("cloudflare-zone-id", "CHANGE_ME", "Cloudflare zone ID")
-	tokenFile := flags.String("cloudflare-token-file", "/etc/bifrost/cloudflare-token", "Cloudflare token file")
-	if err := flags.Parse(arguments); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("init accepts flags only")
-	}
-	if *interfaceName == "" {
-		var err error
-		*interfaceName, err = discoverInterface()
-		if err != nil {
-			return err
-		}
-	}
-
-	configFile := config.Config{
-		Version:    config.CurrentVersion,
-		Interface:  *interfaceName,
-		OwnerID:    *ownerID,
-		SecretFile: *secretFile,
-		DNS: config.DNS{
-			Provider: "cloudflare",
-			Cloudflare: config.Cloudflare{
-				ZoneID:       *zoneID,
-				APITokenFile: *tokenFile,
-			},
-		},
-	}
-	encoded, err := config.Encode(configFile)
-	if err != nil {
-		return err
-	}
-	if *output == "-" {
-		_, err = r.Stdout.Write(encoded)
-		return err
-	}
-	flagsValue := os.O_WRONLY | os.O_CREATE
-	if *force {
-		flagsValue |= os.O_TRUNC
-	} else {
-		flagsValue |= os.O_EXCL
-	}
-	file, err := os.OpenFile(*output, flagsValue, 0o600)
-	if err != nil {
-		return fmt.Errorf("create config: %w", err)
-	}
-	if _, err := file.Write(encoded); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("write config: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close config: %w", err)
-	}
-	_, err = fmt.Fprintf(r.Stdout, "wrote %s; set DNS credentials, add a service, and create %s with mode 0600\n", *output, *secretFile)
-	return err
 }
 
 func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
@@ -354,33 +295,27 @@ func (r Runner) writeLiveStatus(ctx context.Context, configFile config.Config, j
 }
 
 func (r Runner) usage() {
-	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <init|check|edge|serve|status|version> [flags]")
+	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <doctor|init|check|edge|serve|status|version> [flags]")
+	_, _ = fmt.Fprintln(r.Stderr)
+	_, _ = fmt.Fprintln(r.Stderr, "  doctor   report whether this host can run Bifrost; needs no config")
+	_, _ = fmt.Fprintln(r.Stderr, "  init     create the configuration, secret, and credential files")
+	_, _ = fmt.Fprintln(r.Stderr, "  check    diagnose a configured deployment end to end")
+	_, _ = fmt.Fprintln(r.Stderr, "  serve    run the home publication daemon")
+	_, _ = fmt.Fprintln(r.Stderr, "  edge     run the optional IPv4 edge")
+	_, _ = fmt.Fprintln(r.Stderr, "  status   show desired or running state")
+	_, _ = fmt.Fprintln(r.Stderr, "  version  print the build version")
 }
 
 func discoverInterface() (string, error) {
-	interfaces, err := net.Interfaces()
+	eligible, err := eligibleInterfaces()
 	if err != nil {
-		return "", fmt.Errorf("list network interfaces: %w", err)
-	}
-	var eligible []string
-	for _, networkInterface := range interfaces {
-		addresses, err := networkInterface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, address := range addresses {
-			prefix, err := netip.ParsePrefix(address.String())
-			if err == nil && prefix.Addr().Is6() && prefix.Addr().IsGlobalUnicast() && !prefix.Addr().IsPrivate() {
-				eligible = append(eligible, networkInterface.Name)
-				break
-			}
-		}
+		return "", err
 	}
 	if len(eligible) == 0 {
-		return "", errors.New("no interface with public IPv6 was found; pass --interface after IPv6 is configured")
+		return "", errors.New("no interface carries a public IPv6 address; run bifrost doctor for the specific reason, then pass --interface")
 	}
 	if len(eligible) > 1 {
-		return "", fmt.Errorf("multiple public IPv6 interfaces found (%s); pass --interface", strings.Join(eligible, ", "))
+		return "", fmt.Errorf("several interfaces carry a public IPv6 address (%s); pass --interface to name the publication interface", strings.Join(eligible, ", "))
 	}
 	return eligible[0], nil
 }
@@ -403,18 +338,22 @@ func defaultOwnerID() string {
 	return result.String()
 }
 
+// findingIndent aligns continuation lines under the summary column produced by
+// the severity and check widths below.
+const findingIndent = "                    "
+
 func writeFindings(writer io.Writer, report diagnose.Report) error {
 	for _, finding := range report.Findings {
-		if _, err := fmt.Fprintf(writer, "%-7s %-10s %s\n", strings.ToUpper(string(finding.Severity)), finding.Check, finding.Summary); err != nil {
+		if _, err := fmt.Fprintf(writer, "%-7s %-11s %s\n", strings.ToUpper(string(finding.Severity)), finding.Check, finding.Summary); err != nil {
 			return err
 		}
 		if finding.Detail != "" {
-			if _, err := fmt.Fprintf(writer, "                  %s\n", finding.Detail); err != nil {
+			if _, err := fmt.Fprintf(writer, "%s%s\n", findingIndent, finding.Detail); err != nil {
 				return err
 			}
 		}
 		if finding.Remediation != "" {
-			if _, err := fmt.Fprintf(writer, "                  fix: %s\n", finding.Remediation); err != nil {
+			if _, err := fmt.Fprintf(writer, "%sfix: %s\n", findingIndent, finding.Remediation); err != nil {
 				return err
 			}
 		}
