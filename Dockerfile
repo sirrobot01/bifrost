@@ -14,7 +14,7 @@ RUN if [ "$TARGETARCH" = arm ]; then export GOARM="${TARGETVARIANT#v}"; fi; \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /out/bifrost ./cmd/bifrost
 
-FROM --platform=$BUILDPLATFORM alpine:3.23 AS certificates
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS certificates
 RUN apk add --no-cache ca-certificates
 
 FROM scratch
