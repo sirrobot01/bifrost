@@ -58,8 +58,10 @@ export default defineConfig({
         {
           label: 'Start here',
           items: [
-            { slug: 'getting-started/installation' },
+            { slug: 'getting-started/quickstart' },
             { slug: 'getting-started/decision-guide' },
+            { slug: 'getting-started/installation' },
+            { slug: 'getting-started/troubleshooting' },
           ],
         },
         {

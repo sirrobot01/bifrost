@@ -35,62 +35,38 @@ The v1 home role must run on the host that owns the managed service addresses. B
 
 ## Quick start
 
-Build the binary:
+Check that the host can run Bifrost. This reads no configuration and changes nothing.
 
 ```sh
-make build
-sudo install -m 0755 bin/bifrost /usr/local/bin/bifrost
+sudo bifrost doctor
 ```
 
-Create the service account and configuration directory:
+Every `ERROR` line names the problem and the fix. Install once they are gone:
 
 ```sh
-sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin bifrost
-sudo install -d -o bifrost -g bifrost -m 0750 /etc/bifrost
-sudo -u bifrost /usr/local/bin/bifrost init \
-  --interface eth0 \
-  --output /etc/bifrost/config.yaml
+curl -fsSLO https://github.com/sirrobot01/bifrost/releases/latest/download/bifrost_linux_amd64.deb
+sudo apt-get install -y ./bifrost_linux_amd64.deb
 ```
 
-Create the address secret and a Cloudflare token file:
+The package creates the `bifrost` account and `/etc/bifrost`, and installs the systemd unit. It starts nothing.
+
+Answer the setup questions. Bifrost creates the configuration, the address secret, and the DNS credential itself, with the right permissions, and reads your zone ID from your DNS account:
 
 ```sh
-sudo -u bifrost install -m 0600 /dev/null /etc/bifrost/address-secret
-openssl rand -hex 32 | sudo -u bifrost tee /etc/bifrost/address-secret >/dev/null
-sudo -u bifrost install -m 0600 /dev/null /etc/bifrost/cloudflare-token
-sudoedit /etc/bifrost/cloudflare-token
-sudoedit /etc/bifrost/config.yaml
-sudo chown bifrost:bifrost /etc/bifrost/address-secret \
-  /etc/bifrost/cloudflare-token \
-  /etc/bifrost/config.yaml
-sudo chmod 0600 /etc/bifrost/address-secret \
-  /etc/bifrost/cloudflare-token \
-  /etc/bifrost/config.yaml
+sudo bifrost init --interactive
 ```
 
-If you do not use Cloudflare, create the credential file that your provider configuration references instead of `cloudflare-token`.
+Permit inbound IPv6 on your router to the published port. Bifrost cannot do this, and the name will not answer until it is done.
 
-Review the configuration and planned changes:
-
-```sh
-sudo -u bifrost /usr/local/bin/bifrost status \
-  --offline \
-  --config /etc/bifrost/config.yaml
-sudo /usr/local/bin/bifrost serve \
-  --config /etc/bifrost/config.yaml \
-  --dry-run
-```
-
-Install the systemd service only after the dry run is correct:
+Review the planned changes, then start:
 
 ```sh
-sudo install -m 0644 deploy/bifrost.service /etc/systemd/system/bifrost.service
-sudo systemctl daemon-reload
+sudo bifrost serve --config /etc/bifrost/config.yaml --dry-run
 sudo systemctl enable --now bifrost
-sudo /usr/local/bin/bifrost check --config /etc/bifrost/config.yaml
+sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
-Read the [installation guide](https://bifrost.biodun.dev/getting-started/installation/) for release verification, secret creation, container use, and upgrades. The [configuration guide](https://bifrost.biodun.dev/guides/configuration/) describes all fields.
+The [quickstart](https://bifrost.biodun.dev/getting-started/quickstart/) walks through this with a worked example. [Troubleshooting](https://bifrost.biodun.dev/getting-started/troubleshooting/) explains every `doctor` and `check` finding. The [installation guide](https://bifrost.biodun.dev/getting-started/installation/) covers RPM, archives, containers, signature verification, and upgrades.
 
 ## Docker discovery
 
@@ -123,12 +99,15 @@ See the [edge guide](https://bifrost.biodun.dev/networking/edge/) before you ena
 ## Operations
 
 ```sh
+sudo bifrost doctor
 bifrost status --config /etc/bifrost/config.yaml
 bifrost status --config /etc/bifrost/config.yaml --json
 sudo bifrost check --config /etc/bifrost/config.yaml
 curl --fail http://127.0.0.1:9098/healthz
 curl --fail http://127.0.0.1:9098/metrics
 ```
+
+`doctor` judges the host and needs no configuration. `check` judges a configured deployment end to end. Both accept `--json` and exit non-zero on any error finding.
 
 The local server provides `/healthz`, `/status`, and Prometheus `/metrics`. Logs use JSON by default. Use `--log-format text` for plain text.
 

@@ -1,0 +1,132 @@
+---
+title: Troubleshooting setup
+description: What each doctor and check finding means, and what to do about it.
+---
+
+Two commands produce findings. `bifrost doctor` judges the host and needs no configuration. `bifrost check` judges a configured deployment end to end.
+
+Both accept `--json` for scripts, and both exit non-zero when any finding is an error.
+
+```sh
+sudo bifrost doctor
+sudo bifrost check --config /etc/bifrost/config.yaml
+```
+
+Findings are `INFO`, `WARNING`, or `ERROR`. Only errors block publication. A warning is a condition to understand, not always a fault.
+
+## doctor findings
+
+### `platform`
+
+The home role manages addresses on a Linux interface and has no equivalent elsewhere. Run it on the Linux host that owns the public IPv6 addresses.
+
+### `interface`
+
+Bifrost auto-detects the interface holding a public IPv6 address. It stops when there is none, or more than one.
+
+With more than one, name the interface that faces your ISP:
+
+```sh
+sudo bifrost doctor --interface eth0
+```
+
+With none, the host has no public IPv6 yet. That is an ISP or router condition, not a Bifrost one.
+
+### `mtu`
+
+Below 1280 the link cannot carry IPv6 and the error is fatal. Between 1280 and 1500 is a warning, normal on PPPoE, and safe only while path MTU discovery works. See `pmtu` below.
+
+### `ipv6-prefix`
+
+The interface holds no `/64` that Bifrost can publish from. The detail line counts why each address was rejected.
+
+**Temporary privacy addresses.** The kernel rotates these, so a published record would break every few hours. Bifrost refuses them. Keep a stable address on the publication interface:
+
+```sh
+sudo sysctl -w net.ipv6.conf.eth0.use_tempaddr=0
+```
+
+Persist it in `/etc/sysctl.d/` and re-run `doctor`. Privacy addresses on other interfaces are unaffected.
+
+**Not a public address.** Only link-local (`fe80::`) or unique-local (`fd00::`) addresses are present. The ISP is not delegating a routed prefix to this link, or the router is not advertising it.
+
+**Deprecated, or past its advertised lifetime.** The router stopped advertising the prefix. Check that the router still holds its delegation.
+
+**No IPv6 addresses at all.** Confirm IPv6 is enabled on the host and that the ISP delegates a prefix.
+
+### `privileges`
+
+A warning when you run `doctor` as an ordinary user. Splice mode needs `CAP_NET_ADMIN` and ports below 1024 need `CAP_NET_BIND_SERVICE`. The supplied systemd unit grants both, so this warning does not apply to the running service. Use `sudo` to exercise privileged checks.
+
+### `ipv6-egress`
+
+This host cannot open an outbound IPv6 connection. Inbound publication cannot work while this fails, so fix it first. Check for an IPv6 default route:
+
+```sh
+ip -6 route show default
+```
+
+Use `--offline` to skip this and every other check that leaves the host.
+
+### `firewall` and `icmpv6`
+
+Bifrost reads nftables and reports an authoritative input chain that could drop inbound IPv6. It does not change firewall rules in v1; `firewall.mode` is advisory.
+
+Add service-scoped accepts to whichever firewall manager owns the policy. A separate Bifrost table cannot override another table's drop. See [firewall](../../networking/firewall/).
+
+### `docker`
+
+Reported only when you pass `--docker-socket`. Docker socket access grants root-level control of the host. Prefer a restricted socket proxy.
+
+## check findings
+
+`check` covers everything above, plus the following.
+
+### `address`
+
+The derived service address is missing from the host. The service is not running, or it has not reconciled yet. Read `systemctl status bifrost` and the daemon logs.
+
+### `listener`
+
+The address exists but nothing accepts TCP on the published port. In splice mode Bifrost owns that listener, so this points at the daemon. In direct mode the backend owns it, so confirm the backend is listening on the public address.
+
+### `dns`
+
+The published name does not resolve to the expected address. Immediately after a change this is usually propagation; wait for the record TTL. If it persists, read `dns-owner`.
+
+### `dns-owner`
+
+Bifrost marks the records it owns with a TXT record and refuses to modify records it does not own. This finding means the credential is wrong, the zone is wrong, or a record at that name belongs to something else.
+
+Resolve the conflict at the provider, or publish under a different name. Do not delete the ownership marker while the service is running.
+
+### `external`
+
+The service is not reachable from the configured external probe, while the local address, listener, and host policy are correct. The remaining hop is the router. Confirm its inbound IPv6 rule.
+
+Without a configured probe this is a warning: Bifrost cannot otherwise tell router filtering apart from host state. See [external probe](../../reference/external-probe/).
+
+### `pmtu`
+
+The probe delivered a packet that should have produced ICMPv6 Packet Too Big and did not. This is the classic blackhole: connections open, then stall on the first large response.
+
+Permit ICMPv6 types 1 to 4 end to end, on the host and on the router.
+
+### `client-ip`
+
+A warning that splice mode hides the client address from the backend. That is inherent to splice. Use direct mode to preserve it, or enable PROXY protocol v2 only when the backend explicitly supports it. A backend that does not parse PROXY v2 will treat the header as request data.
+
+## Setup problems without a finding
+
+**`init` says a file already exists.** It refuses to overwrite secrets. Move the file aside, or pass `--force` when you intend to replace it.
+
+**The Cloudflare zone lookup fails.** The token cannot read the zone. It needs `Zone:Read` and `DNS:Edit` on the zone that serves your name. `init` falls back to asking for the zone ID directly.
+
+**A secret file is rejected at startup.** Bifrost refuses secrets readable by group or other:
+
+```sh
+sudo chmod 0600 /etc/bifrost/address-secret
+sudo chown bifrost:bifrost /etc/bifrost/address-secret
+```
+
+**The published name works from inside the house but not outside.** The router is not forwarding inbound IPv6. Loopback from inside often bypasses it.
