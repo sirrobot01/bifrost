@@ -26,6 +26,16 @@ Use a tunnel or VPN in these cases:
 
 A VPS tunnel sends traffic through the VPS. Bifrost does not send native IPv6 traffic through a VPS.
 
+## Compare with a mesh VPN
+
+A mesh VPN such as Tailscale or Headscale connects enrolled devices. Every client must install software, sign in, and receive approval. Use a mesh VPN when only approved users and devices need access, such as SSH or an administrative panel.
+
+Bifrost publishes services to clients without enrollment. Use Bifrost when clients cannot run companion software.
+
+Tailscale Funnel publishes a service to the public internet through Tailscale relay servers. Funnel limits the available ports, uses a `ts.net` name, and carries all traffic through the relay. Funnel is not available with Headscale. Bifrost publishes any TCP service on a domain you control, and native IPv6 traffic does not pass through a relay.
+
+The tools work together. Publish public services with Bifrost. Reach private services through the mesh VPN and do not publish them.
+
 ## Use an HTTP proxy
 
 Use an HTTP CDN or reverse proxy when all services use HTTP and the proxy limits meet your needs.
