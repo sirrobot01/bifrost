@@ -35,20 +35,19 @@ The v1 home role must run on the host that owns the managed service addresses. B
 
 ## Quick start
 
+Install the latest release. The script verifies the checksum and installs the deb or rpm package, which creates the `bifrost` account and `/etc/bifrost` and installs the systemd unit. It starts nothing.
+
+```sh
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+```
+
 Check that the host can run Bifrost. This reads no configuration and changes nothing.
 
 ```sh
 sudo bifrost doctor
 ```
 
-Every `ERROR` line names the problem and the fix. Install once they are gone:
-
-```sh
-curl -fsSLO https://github.com/sirrobot01/bifrost/releases/latest/download/bifrost_linux_amd64.deb
-sudo apt-get install -y ./bifrost_linux_amd64.deb
-```
-
-The package creates the `bifrost` account and `/etc/bifrost`, and installs the systemd unit. It starts nothing.
+Every `ERROR` line names the problem, the fix, and a troubleshooting link. Continue once they are gone.
 
 Answer the setup questions. Bifrost creates the configuration, the address secret, and the DNS credential itself, with the right permissions, and reads your zone ID from your DNS account:
 

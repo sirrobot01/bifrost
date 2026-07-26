@@ -15,44 +15,41 @@ You need three things:
 - A DNS name you control, on Cloudflare, deSEC, dynv6, or an RFC 2136 server.
 - Access to your router to permit inbound IPv6.
 
-The next command tells you whether the first one is true.
+## 1. Install Bifrost
 
-## 1. Check the host
+```sh
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+```
 
-Run `doctor` before you install anything else. It reads no configuration and changes nothing.
+The script downloads the latest release for this machine, verifies its checksum, and installs the deb or rpm package. The package creates the `bifrost` account, creates `/etc/bifrost`, and installs the systemd unit. It does not start anything, so it is safe to install before knowing whether the host qualifies; `apt-get remove bifrost` undoes it.
+
+See [installation](../installation/) for direct package downloads, archives, containers, and signature verification.
+
+## 2. Check the host
+
+Run `doctor` before you configure anything. It reads no configuration and changes nothing.
 
 ```sh
 sudo bifrost doctor
 ```
 
 ```
-INFO    platform    host runs Linux
-INFO    interface   publication interface is eth0
-INFO    mtu         interface MTU is suitable for IPv6
-                    MTU 1500
-INFO    ipv6-prefix interface holds a usable global IPv6 /64
-                    selected 2001:db8:abcd:1200::/64
-INFO    privileges  running with the privilege needed to manage addresses and bind service ports
-INFO    ipv6-egress outbound IPv6 works
-                    reached [2606:4700:4700::1111]:443
-INFO    firewall    no nftables IPv6 input base chain with a drop policy was found
+✓ INFO    platform    host runs Linux
+✓ INFO    interface   publication interface is eth0
+✓ INFO    mtu         interface MTU is suitable for IPv6
+                      MTU 1500
+✓ INFO    ipv6-prefix interface holds a usable global IPv6 /64
+                      selected 2001:db8:abcd:1200::/64
+✓ INFO    privileges  running with the privilege needed to manage addresses and bind service ports
+✓ INFO    ipv6-egress outbound IPv6 works
+                      reached [2606:4700:4700::1111]:443
+✓ INFO    firewall    no nftables IPv6 input base chain with a drop policy was found
 
 This host can run Bifrost.
 Next: bifrost init --interactive
 ```
 
-Every `ERROR` line names the problem and the fix. Do not continue until they are gone. [Troubleshooting](../troubleshooting/) covers each check.
-
-## 2. Install Bifrost
-
-```sh
-curl -fsSLO https://github.com/sirrobot01/bifrost/releases/latest/download/bifrost_linux_amd64.deb
-sudo apt-get install -y ./bifrost_linux_amd64.deb
-```
-
-The package creates the `bifrost` account, creates `/etc/bifrost`, and installs the systemd unit. It does not start anything.
-
-See [installation](../installation/) for RPM, archives, containers, and signature verification.
+Every `ERROR` line names the problem, the fix, and a link into [troubleshooting](../troubleshooting/). Do not continue until they are gone.
 
 ## 3. Create the configuration
 

@@ -13,6 +13,16 @@ Bifrost publishes Linux builds for these CPUs:
 | `arm64`, `aarch64` | ARM64 |
 | `armv7` | 32-bit ARM v7 |
 
+## Install with the script
+
+```sh
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+```
+
+The script detects the CPU and package manager, downloads the matching deb or rpm from the latest release, verifies it against the release checksum file, and installs it. Where no package manager fits, it installs the archive binary to `/usr/local/bin` and points at the [archive steps](#install-from-an-archive) for the remaining setup.
+
+The script does not verify the release signature, because cosign is rarely installed before Bifrost is. For a host you care about, [verify the release](#verify-a-release) and install the package yourself.
+
 ## Install a package
 
 Debian and Ubuntu:
