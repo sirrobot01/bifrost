@@ -42,6 +42,13 @@ func NewCloudflare(config CloudflareConfig) (*Cloudflare, error) {
 	if config.APIToken == "" {
 		return nil, errors.New("Cloudflare API token is required")
 	}
+	return newCloudflareClient(config), nil
+}
+
+// newCloudflareClient builds the HTTP plumbing shared by the provider and by
+// zone lookup. Lookup runs before a zone ID is known, so it cannot go through
+// NewCloudflare's validation.
+func newCloudflareClient(config CloudflareConfig) *Cloudflare {
 	client := config.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -58,7 +65,54 @@ func NewCloudflare(config CloudflareConfig) (*Cloudflare, error) {
 		baseURL:     baseURL,
 		maxAttempts: 4,
 		baseDelay:   100 * time.Millisecond,
-	}, nil
+	}
+}
+
+// LookupCloudflareZone resolves the zone that serves dnsName and returns its ID
+// and name. Setup would otherwise require the operator to find a zone ID in the
+// dashboard, which is the one configuration value they cannot derive from
+// anything they already know.
+func LookupCloudflareZone(ctx context.Context, config CloudflareConfig, dnsName string) (string, string, error) {
+	dnsName = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(dnsName)), ".")
+	if dnsName == "" {
+		return "", "", errors.New("a DNS name is required to look up a Cloudflare zone")
+	}
+	if config.APIToken == "" {
+		return "", "", errors.New("Cloudflare API token is required")
+	}
+
+	client := newCloudflareClient(config)
+	query := url.Values{"per_page": {strconv.Itoa(cloudflarePageSize)}}
+	var zoneID, zoneName string
+	for page := 1; page <= cloudflareMaxPages; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var response cloudflareResponse[[]cloudflareZone]
+		if err := client.request(ctx, http.MethodGet, "/zones", query, nil, &response); err != nil {
+			return "", "", err
+		}
+		for _, zone := range response.Result {
+			name := strings.TrimSuffix(strings.ToLower(zone.Name), ".")
+			if name == "" || (dnsName != name && !strings.HasSuffix(dnsName, "."+name)) {
+				continue
+			}
+			// An account can hold both example.com and a delegated
+			// sub.example.com. Records belong in the most specific zone, so the
+			// longest matching name wins.
+			if len(name) > len(zoneName) {
+				zoneID, zoneName = zone.ID, name
+			}
+		}
+		if len(response.Result) < cloudflarePageSize {
+			break
+		}
+		if response.ResultInfo.TotalPages > 0 && page >= response.ResultInfo.TotalPages {
+			break
+		}
+	}
+	if zoneID == "" {
+		return "", "", fmt.Errorf("no Cloudflare zone in this account serves %q; confirm the token has Zone:Read and DNS:Edit on that zone", dnsName)
+	}
+	return zoneID, zoneName, nil
 }
 
 // cloudflarePageSize is the page size requested when listing records. The API
@@ -140,6 +194,11 @@ func (c *Cloudflare) Delete(ctx context.Context, id string) error {
 	}
 	var response cloudflareResponse[json.RawMessage]
 	return c.request(ctx, http.MethodDelete, c.recordsPath()+"/"+url.PathEscape(id), nil, nil, &response)
+}
+
+type cloudflareZone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type cloudflareRecord struct {
@@ -252,6 +311,10 @@ func (c *Cloudflare) request(ctx context.Context, method, path string, query url
 				return cloudflareFailure(response.Errors)
 			}
 		case *cloudflareResponse[cloudflareRecord]:
+			if !response.Success {
+				return cloudflareFailure(response.Errors)
+			}
+		case *cloudflareResponse[[]cloudflareZone]:
 			if !response.Success {
 				return cloudflareFailure(response.Errors)
 			}

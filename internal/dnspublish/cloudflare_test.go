@@ -304,3 +304,59 @@ func TestCloudflareListZoneStopsOnTotalCountAlone(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", requests.Load())
 	}
 }
+
+func TestLookupCloudflareZonePrefersTheMostSpecificZone(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/zones" {
+			t.Errorf("path = %q, want /zones", request.URL.Path)
+		}
+		_, _ = fmt.Fprint(response, `{"success":true,"errors":[],"result":[
+			{"id":"apex","name":"example.com"},
+			{"id":"delegated","name":"home.example.com"},
+			{"id":"other","name":"example.net"}
+		]}`)
+	}))
+	defer server.Close()
+
+	zoneID, zoneName, err := LookupCloudflareZone(t.Context(), CloudflareConfig{APIToken: "token", BaseURL: server.URL}, "media.home.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zoneID != "delegated" || zoneName != "home.example.com" {
+		t.Fatalf("zone = %q/%q, want delegated/home.example.com", zoneID, zoneName)
+	}
+}
+
+func TestLookupCloudflareZoneRejectsUnservedName(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(response, `{"success":true,"errors":[],"result":[{"id":"apex","name":"example.net"}]}`)
+	}))
+	defer server.Close()
+
+	_, _, err := LookupCloudflareZone(t.Context(), CloudflareConfig{APIToken: "token", BaseURL: server.URL}, "media.example.com")
+	if err == nil {
+		t.Fatal("LookupCloudflareZone succeeded for a name no zone serves")
+	}
+	if !strings.Contains(err.Error(), "Zone:Read") {
+		t.Fatalf("error = %q, want the token permission hint", err)
+	}
+}
+
+func TestLookupCloudflareZoneRejectsSiblingSuffix(t *testing.T) {
+	t.Parallel()
+
+	// "notexample.com" ends with "example.com" as a string but is a different
+	// zone, so suffix matching has to respect the label boundary.
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(response, `{"success":true,"errors":[],"result":[{"id":"apex","name":"example.com"}]}`)
+	}))
+	defer server.Close()
+
+	if _, _, err := LookupCloudflareZone(t.Context(), CloudflareConfig{APIToken: "token", BaseURL: server.URL}, "notexample.com"); err == nil {
+		t.Fatal("LookupCloudflareZone matched across a label boundary")
+	}
+}
