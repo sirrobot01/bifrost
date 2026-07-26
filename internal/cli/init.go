@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -144,7 +145,11 @@ func (r Runner) runInitInteractive(ctx context.Context, configDir, interfaceName
 	if err != nil {
 		return err
 	}
-	dnsConfig, files, err := promptDNSProvider(ctx, prompt, provider, service.DNSName, configDir)
+	lookup := r.zoneLookup
+	if lookup == nil {
+		lookup = providerZoneLookup
+	}
+	dnsConfig, files, err := promptDNSProvider(ctx, prompt, provider, service.DNSName, configDir, lookup)
 	if err != nil {
 		return err
 	}
@@ -252,7 +257,20 @@ func promptService(prompt *prompter) (config.StaticService, error) {
 	}, nil
 }
 
-func promptDNSProvider(ctx context.Context, prompt *prompter, provider, dnsName, configDir string) (config.DNS, []pendingFile, error) {
+// zoneLookupFunc asks a provider account which zone covers dnsName.
+type zoneLookupFunc func(ctx context.Context, provider, token, dnsName string) (string, error)
+
+func providerZoneLookup(ctx context.Context, provider, token, dnsName string) (string, error) {
+	switch provider {
+	case "desec":
+		return dnspublish.LookupDESECZone(ctx, dnspublish.DESECConfig{Token: token}, dnsName)
+	case "dynv6":
+		return dnspublish.LookupDynv6Zone(ctx, dnspublish.Dynv6Config{Token: token}, dnsName)
+	}
+	return "", fmt.Errorf("no zone lookup for provider %q", provider)
+}
+
+func promptDNSProvider(ctx context.Context, prompt *prompter, provider, dnsName, configDir string, lookup zoneLookupFunc) (config.DNS, []pendingFile, error) {
 	switch provider {
 	case "cloudflare":
 		token, err := prompt.secret("Cloudflare API token")
@@ -275,11 +293,13 @@ func promptDNSProvider(ctx context.Context, prompt *prompter, provider, dnsName,
 			}, nil
 
 	case "desec":
-		zone, err := prompt.required("deSEC zone", guessZone(dnsName))
+		token, err := prompt.secret("deSEC token")
 		if err != nil {
 			return config.DNS{}, nil, err
 		}
-		token, err := prompt.secret("deSEC token")
+		zone, err := resolveProviderZone(prompt, "deSEC", dnsName, func() (string, error) {
+			return lookup(ctx, "desec", token, dnsName)
+		})
 		if err != nil {
 			return config.DNS{}, nil, err
 		}
@@ -292,11 +312,13 @@ func promptDNSProvider(ctx context.Context, prompt *prompter, provider, dnsName,
 			}, nil
 
 	case "dynv6":
-		zone, err := prompt.required("dynv6 zone", guessZone(dnsName))
+		token, err := prompt.secret("dynv6 token")
 		if err != nil {
 			return config.DNS{}, nil, err
 		}
-		token, err := prompt.secret("dynv6 token")
+		zone, err := resolveProviderZone(prompt, "dynv6", dnsName, func() (string, error) {
+			return lookup(ctx, "dynv6", token, dnsName)
+		})
 		if err != nil {
 			return config.DNS{}, nil, err
 		}
@@ -450,10 +472,35 @@ func secretContent(value string) []byte {
 // guessZone proposes the registrable zone for a service name. It is only a
 // prompt default: providers differ on where the zone boundary sits, so the
 // operator confirms it.
+// resolveProviderZone asks the provider which account zone covers dnsName and
+// offers it as the default. The offline guess is only a fallback: shared
+// suffixes like dedyn.io make the textual answer wrong, which is how a
+// misconfigured zone survives until the first reconcile.
+func resolveProviderZone(prompt *prompter, providerName, dnsName string, lookup func() (string, error)) (string, error) {
+	_ = prompt.say("  looking up the %s zone for %s", providerName, dnsName)
+	zone, err := lookup()
+	if err == nil {
+		_ = prompt.say("  found zone %s", zone)
+	} else {
+		_ = prompt.say("  lookup failed: %v", err)
+		zone = guessZone(dnsName)
+	}
+	return prompt.required(providerName+" zone", zone)
+}
+
+// sharedZoneSuffixes are public suffixes whose customer zones sit one label
+// deeper than a registrable domain looks. The provider account lookup is the
+// authoritative answer; this only shapes the offline default.
+var sharedZoneSuffixes = []string{"dedyn.io", "dynv6.net", "duckdns.org"}
+
 func guessZone(dnsName string) string {
 	labels := strings.Split(strings.TrimSuffix(dnsName, "."), ".")
-	if len(labels) < 2 {
+	depth := 2
+	if len(labels) >= 3 && slices.Contains(sharedZoneSuffixes, strings.ToLower(strings.Join(labels[len(labels)-2:], "."))) {
+		depth = 3
+	}
+	if len(labels) < depth {
 		return dnsName
 	}
-	return strings.Join(labels[len(labels)-2:], ".")
+	return strings.Join(labels[len(labels)-depth:], ".")
 }

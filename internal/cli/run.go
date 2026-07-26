@@ -28,6 +28,9 @@ type Runner struct {
 	// typed secrets needs the underlying terminal descriptor.
 	Stdin   *os.File
 	Version string
+	// zoneLookup overrides provider zone discovery during init. Tests set it
+	// to avoid real API calls; nil selects the provider implementations.
+	zoneLookup zoneLookupFunc
 }
 
 func (r Runner) Run(ctx context.Context, arguments []string) int {

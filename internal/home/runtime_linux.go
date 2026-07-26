@@ -26,6 +26,7 @@ type Runtime struct {
 	observer   *netwatch.Observer
 	controller *Controller
 	services   []Service
+	publisher  *dnspublish.Reconciler
 	docker     *dockerwatch.Client
 	logger     *slog.Logger
 	metrics    *observability.Server
@@ -125,7 +126,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
-	runtime := &Runtime{config: configFile, observer: observer, controller: controller, services: services, docker: dockerClient, logger: logger, startedAt: time.Now()}
+	runtime := &Runtime{config: configFile, observer: observer, controller: controller, services: services, publisher: publisher, docker: dockerClient, logger: logger, startedAt: time.Now()}
 	metricsServer, err := observability.NewServer(configFile.Metrics.Listen, runtime.observabilitySnapshot)
 	if err != nil {
 		return nil, err
@@ -142,7 +143,25 @@ func (r *Runtime) DryRun(ctx context.Context) ([]Action, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.controller.Reconcile(ctx, r.services, snapshot, true)
+	actions, err := r.controller.Reconcile(ctx, r.services, snapshot, true)
+	if err != nil {
+		return nil, err
+	}
+	// One authenticated read per service proves the provider credentials,
+	// zone, and record ownership. Without it a wrong zone prints a plausible
+	// plan here and then fails on the first live reconcile.
+	verified := make(map[string]struct{}, len(r.services))
+	for _, service := range r.services {
+		if _, done := verified[service.DNSName]; done {
+			continue
+		}
+		verified[service.DNSName] = struct{}{}
+		if err := r.publisher.Preflight(ctx, service.DNSName); err != nil {
+			return nil, fmt.Errorf("provider preflight for %s: %w", service.DNSName, err)
+		}
+		actions = append(actions, Action{Service: service.ID, Kind: "verify", Detail: "provider credentials and DNS ownership verified for " + service.DNSName})
+	}
+	return actions, nil
 }
 
 func (r *Runtime) Run(ctx context.Context) error {

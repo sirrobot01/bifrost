@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,56 @@ func TestDESECProviderReadsAndReplacesRRSet(t *testing.T) {
 	}
 	if !slices.Equal(rrset.Records, []string{"2001:db8::1", "2001:db8::2"}) {
 		t.Fatalf("RRset = %+v", rrset)
+	}
+}
+
+func TestLookupDESECZonePicksLongestCoveringDomain(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/domains/" {
+			t.Errorf("path = %s", request.URL.Path)
+		}
+		_, _ = writer.Write([]byte(`[{"name":"dedyn.io.example"},{"name":"sirrobot01.dedyn.io"},{"name":"other.net"}]`))
+	}))
+	defer server.Close()
+
+	zone, err := LookupDESECZone(t.Context(), DESECConfig{Token: "token", BaseURL: server.URL}, "plex.sirrobot01.dedyn.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zone != "sirrobot01.dedyn.io" {
+		t.Fatalf("zone = %q", zone)
+	}
+	_, err = LookupDESECZone(t.Context(), DESECConfig{Token: "token", BaseURL: server.URL}, "plex.elsewhere.example")
+	if err == nil {
+		t.Fatal("uncovered name did not error")
+	}
+}
+
+func TestDESECProviderExplainsMinimumTTLRejection(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`[{"ttl":["Ensure this value is greater than or equal to 3600."]}]`))
+	}))
+	defer server.Close()
+
+	provider, err := NewDESEC(DESECConfig{Zone: "example.com", Token: "token", BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.Create(t.Context(), Record{Name: "media.example.com", Type: RecordAAAA, Content: "2001:db8::1", TTL: 60})
+	if err == nil {
+		t.Fatal("minimum-TTL rejection did not error")
+	}
+	if !strings.Contains(err.Error(), "dns.ttl") || !strings.Contains(err.Error(), "minimum TTL") {
+		t.Fatalf("error lacks remediation guidance: %v", err)
 	}
 }
 

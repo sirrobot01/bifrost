@@ -30,6 +30,9 @@ type Checker struct {
 	firewall FirewallAuditor
 	dial     func(context.Context, string, string) (net.Conn, error)
 	now      func() time.Time
+	// authoritativeAAAA queries the zone's own nameservers, bypassing the
+	// local resolver's cache. Tests replace it.
+	authoritativeAAAA func(context.Context, string) ([]netip.Addr, string, error)
 }
 
 type netResolver interface {
@@ -44,7 +47,7 @@ func NewChecker(resolver netResolver, firewall FirewallAuditor) *Checker {
 		firewall = DefaultFirewallAuditor()
 	}
 	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	return &Checker{resolver: resolver, firewall: firewall, dial: dialer.DialContext, now: time.Now}
+	return &Checker{resolver: resolver, firewall: firewall, dial: dialer.DialContext, now: time.Now, authoritativeAAAA: lookupAuthoritativeAAAA}
 }
 
 func (c *Checker) Check(ctx context.Context, input Input) (Report, error) {
@@ -85,6 +88,49 @@ func (c *Checker) Check(ctx context.Context, input Input) (Report, error) {
 	return report, nil
 }
 
+// dnsFinding judges the resolver view of the service name and, when that view
+// is wrong, asks the zone's authoritative nameservers which side is lying.
+// The management API can report success while the nameservers serve nothing
+// (unactivated account, missing delegation), and a resolver can serve a stale
+// negative answer long after publication; only this comparison tells them apart.
+func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
+	resolved, err := c.resolver.LookupNetIP(ctx, "ip6", service.DNSName)
+	if err == nil && slices.Contains(resolved, service.Address) {
+		return Finding{Check: "dns", Severity: SeverityInfo, Summary: service.Name + ": DNS contains the expected IPv6 address"}
+	}
+	local := fmt.Sprintf("local resolver answered %v", resolved)
+	if err != nil {
+		local = "local resolver failed: " + err.Error()
+	}
+	authoritative, source, authErr := c.authoritativeAAAA(ctx, service.DNSName)
+	switch {
+	case authErr == nil && slices.Contains(authoritative, service.Address):
+		return Finding{
+			Check:       "dns",
+			Severity:    SeverityWarning,
+			Summary:     service.Name + ": the authoritative nameserver has the address, the local resolver does not",
+			Detail:      source + " answers with the expected address; " + local,
+			Remediation: "wait for the local resolver's cached answer to expire, or flush its cache",
+		}
+	case authErr == nil:
+		return Finding{
+			Check:       "dns",
+			Severity:    SeverityError,
+			Summary:     service.Name + ": the authoritative nameserver does not serve the expected address",
+			Detail:      fmt.Sprintf("%s answered %v, expected %s", source, authoritative, service.Address),
+			Remediation: "if dns-owner reports correct provider state, confirm the DNS account is activated and the zone is delegated",
+		}
+	default:
+		return Finding{
+			Check:       "dns",
+			Severity:    SeverityError,
+			Summary:     service.Name + ": DNS lookup failed",
+			Detail:      local + "; authoritative check failed: " + authErr.Error(),
+			Remediation: "confirm the DNS name and provider state, then re-run check",
+		}
+	}
+}
+
 func (c *Checker) serviceFindings(ctx context.Context, service Service, local map[netip.Addr]struct{}, interfaceMTU int, prober ExternalProber) []Finding {
 	findings := make([]Finding, 0, 5)
 	if service.ClientIPPreserved {
@@ -107,14 +153,7 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 		}
 	}
 
-	resolved, err := c.resolver.LookupNetIP(ctx, "ip6", service.DNSName)
-	if err != nil {
-		findings = append(findings, Finding{Check: "dns", Severity: SeverityError, Summary: service.Name + ": DNS lookup failed", Detail: err.Error()})
-	} else if !slices.Contains(resolved, service.Address) {
-		findings = append(findings, Finding{Check: "dns", Severity: SeverityError, Summary: service.Name + ": DNS does not contain the expected IPv6 address", Detail: fmt.Sprintf("expected %s, resolved %v", service.Address, resolved)})
-	} else {
-		findings = append(findings, Finding{Check: "dns", Severity: SeverityInfo, Summary: service.Name + ": DNS contains the expected IPv6 address"})
-	}
+	findings = append(findings, c.dnsFinding(ctx, service))
 
 	if prober == nil {
 		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Summary: service.Name + ": external reachability and PMTU were not tested", Remediation: "configure an explicit external probe endpoint to distinguish router filtering from host state"})

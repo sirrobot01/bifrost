@@ -62,6 +62,33 @@ func NewDynv6(config Dynv6Config) (*Dynv6Provider, error) {
 	return &Dynv6Provider{zone: zone, token: config.Token, client: client, baseURL: baseURL}, nil
 }
 
+// LookupDynv6Zone returns the account zone that should hold dnsName: the
+// longest zone that is the name itself or a parent of it.
+func LookupDynv6Zone(ctx context.Context, config Dynv6Config, dnsName string) (string, error) {
+	dnsName = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(dnsName)), ".")
+	if dnsName == "" {
+		return "", errors.New("a DNS name is required to look up a dynv6 zone")
+	}
+	config.Zone = dnsName // unused by the zone listing, but required by the constructor
+	provider, err := NewDynv6(config)
+	if err != nil {
+		return "", err
+	}
+	var zones []dynv6Zone
+	if _, err := provider.request(ctx, http.MethodGet, "/zones", nil, &zones); err != nil {
+		return "", err
+	}
+	names := make([]string, len(zones))
+	for index, candidate := range zones {
+		names[index] = candidate.Name
+	}
+	zone := longestCoveringZone(dnsName, names)
+	if zone == "" {
+		return "", fmt.Errorf("no dynv6 zone in this account covers %q", dnsName)
+	}
+	return zone, nil
+}
+
 func (p *Dynv6Provider) List(ctx context.Context, name string, recordType RecordType) ([]Record, error) {
 	records, err := p.ListZone(ctx, recordType)
 	if err != nil {

@@ -101,11 +101,15 @@ Limit the token to the required zone.
 ```yaml
 dns:
   provider: desec
-  ttl: 60s
+  ttl: 3600s
   desec:
     zone: example.com
     token_file: /etc/bifrost/desec-token
 ```
+
+deSEC enforces a minimum record TTL of 3600 seconds on new domains, so `ttl` must be at least `3600s` there. deSEC support lowers the domain minimum on request for dynamic-address use; after that, a shorter `ttl` such as `60s` recovers faster from a prefix change.
+
+For a dedyn.io name such as `service.example.dedyn.io`, the zone is `example.dedyn.io`, not `dedyn.io`.
 
 ### dynv6
 

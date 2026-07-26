@@ -96,7 +96,11 @@ The address exists but nothing accepts TCP on the published port. In splice mode
 
 ### `dns`
 
-The published name does not resolve to the expected address. Immediately after a change this is usually propagation; wait for the record TTL. If it persists, read `dns-owner`.
+The published name does not resolve to the expected address. When the local answer is wrong, `check` also asks the zone's authoritative nameservers and reports which side disagrees:
+
+- A warning that the authoritative nameserver has the address means only the local resolver is behind, usually a cached negative answer from lookups made before publication. Wait for the cache to expire or flush the resolver.
+- An error that the authoritative nameserver does not serve the address means the record never reached the nameservers, even when `dns-owner` reports correct provider state. Confirm the DNS account is activated and the zone is delegated to the provider's nameservers.
+- If the authoritative check itself fails, confirm the DNS name is correct and the host can reach the internet.
 
 ### `dns-owner`
 

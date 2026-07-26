@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,60 @@ type fixedProber struct {
 
 func (p fixedProber) Probe(context.Context, ProbeRequest) (ProbeResult, error) {
 	return p.result, p.err
+}
+
+func TestDNSFindingCrossChecksAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	address := netip.MustParseAddr("2001:db8::1")
+	service := Service{Name: "media", DNSName: "media.example.com", Address: address, Port: 443}
+	tests := []struct {
+		name          string
+		resolver      fixedResolver
+		authoritative []netip.Addr
+		authErr       error
+		wantSeverity  Severity
+		wantSummary   string
+	}{
+		{
+			name:         "resolver agrees",
+			resolver:     fixedResolver{addresses: []netip.Addr{address}},
+			wantSeverity: SeverityInfo,
+			wantSummary:  "expected IPv6 address",
+		},
+		{
+			name:          "stale local resolver",
+			resolver:      fixedResolver{err: errors.New("no such host")},
+			authoritative: []netip.Addr{address},
+			wantSeverity:  SeverityWarning,
+			wantSummary:   "the local resolver does not",
+		},
+		{
+			name:         "unpublished at authoritative",
+			resolver:     fixedResolver{err: errors.New("no such host")},
+			wantSeverity: SeverityError,
+			wantSummary:  "authoritative nameserver does not serve",
+		},
+		{
+			name:         "authoritative unreachable",
+			resolver:     fixedResolver{err: errors.New("no such host")},
+			authErr:      errors.New("no NS records found"),
+			wantSeverity: SeverityError,
+			wantSummary:  "DNS lookup failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			checker := NewChecker(test.resolver, UnavailableFirewallAuditor(errors.New("unused")))
+			checker.authoritativeAAAA = func(context.Context, string) ([]netip.Addr, string, error) {
+				return test.authoritative, "ns1.example.net", test.authErr
+			}
+			finding := checker.dnsFinding(t.Context(), service)
+			if finding.Severity != test.wantSeverity || !strings.Contains(finding.Summary, test.wantSummary) {
+				t.Fatalf("finding = %+v", finding)
+			}
+		})
+	}
 }
 
 func TestServiceFindingsIdentifyPMTUBlackhole(t *testing.T) {

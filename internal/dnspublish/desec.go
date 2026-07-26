@@ -54,6 +54,52 @@ func NewDESEC(config DESECConfig) (*DESECProvider, error) {
 	return &DESECProvider{zone: zone, token: config.Token, client: client, baseURL: baseURL}, nil
 }
 
+// LookupDESECZone returns the account domain that should hold dnsName: the
+// longest domain that is the name itself or a parent of it. Textual guessing
+// cannot do this, because suffixes like dedyn.io host many customer zones.
+func LookupDESECZone(ctx context.Context, config DESECConfig, dnsName string) (string, error) {
+	dnsName = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(dnsName)), ".")
+	if dnsName == "" {
+		return "", errors.New("a DNS name is required to look up a deSEC zone")
+	}
+	config.Zone = dnsName // unused by the domain listing, but required by the constructor
+	provider, err := NewDESEC(config)
+	if err != nil {
+		return "", err
+	}
+	var domains []struct {
+		Name string `json:"name"`
+	}
+	if _, err := provider.request(ctx, http.MethodGet, "/domains/", nil, nil, &domains); err != nil {
+		return "", err
+	}
+	names := make([]string, len(domains))
+	for index, domain := range domains {
+		names[index] = domain.Name
+	}
+	zone := longestCoveringZone(dnsName, names)
+	if zone == "" {
+		return "", fmt.Errorf("no deSEC domain in this account covers %q", dnsName)
+	}
+	return zone, nil
+}
+
+// longestCoveringZone returns the candidate that is dnsName itself or a parent
+// of it. Records belong in the most specific zone, so the longest match wins.
+func longestCoveringZone(dnsName string, candidates []string) string {
+	var zone string
+	for _, candidate := range candidates {
+		name := strings.TrimSuffix(strings.ToLower(candidate), ".")
+		if name == "" || (dnsName != name && !strings.HasSuffix(dnsName, "."+name)) {
+			continue
+		}
+		if len(name) > len(zone) {
+			zone = name
+		}
+	}
+	return zone
+}
+
 func (p *DESECProvider) List(ctx context.Context, name string, recordType RecordType) ([]Record, error) {
 	subname, err := p.subname(name)
 	if err != nil {
@@ -238,6 +284,15 @@ func (p *DESECProvider) request(ctx context.Context, method, path string, query 
 		return response.StatusCode, nil
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		// deSEC enforces a per-domain minimum TTL (3600s unless support has
+		// lowered it), and the raw validation error does not say what to do.
+		if response.StatusCode == http.StatusBadRequest &&
+			bytes.Contains(responseBody, []byte(`"ttl"`)) &&
+			bytes.Contains(responseBody, []byte("greater than or equal to")) {
+			return response.StatusCode, fmt.Errorf(
+				"deSEC rejected the record TTL (%s): the domain enforces a minimum TTL; raise dns.ttl to satisfy it, or ask deSEC support to lower the domain minimum",
+				bytes.TrimSpace(responseBody))
+		}
 		return response.StatusCode, fmt.Errorf("deSEC API returned HTTP %d: %s", response.StatusCode, bytes.TrimSpace(responseBody))
 	}
 	if result != nil && len(responseBody) > 0 {

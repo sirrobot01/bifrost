@@ -137,6 +137,29 @@ func (r *Reconciler) reconcileRecords(ctx context.Context, name string, recordTy
 	return nil
 }
 
+// Preflight proves the provider credentials, the configured zone, and the
+// ownership of name without mutating anything. A wrong zone or token fails
+// here, in a dry run, instead of surviving until the first live reconcile.
+func (r *Reconciler) Preflight(ctx context.Context, name string) error {
+	name, err := normalizeName(name)
+	if err != nil {
+		return err
+	}
+	markers, err := r.provider.List(ctx, ownershipName(name), RecordTXT)
+	if err != nil {
+		return fmt.Errorf("list DNS ownership records: %w", err)
+	}
+	ipv6Records, err := r.provider.List(ctx, name, RecordAAAA)
+	if err != nil {
+		return fmt.Errorf("list AAAA records: %w", err)
+	}
+	ipv4Records, err := r.provider.List(ctx, name, RecordA)
+	if err != nil {
+		return fmt.Errorf("list A records: %w", err)
+	}
+	return verifyOwnership(markers, ownershipPrefix+r.ownerID, len(ipv6Records)+len(ipv4Records) > 0)
+}
+
 // Verify checks ownership and exact provider state without mutation.
 func (r *Reconciler) Verify(ctx context.Context, publication Publication) error {
 	publication, err := normalizePublication(publication)
@@ -147,20 +170,31 @@ func (r *Reconciler) Verify(ctx context.Context, publication Publication) error 
 	if err != nil {
 		return fmt.Errorf("list DNS ownership records: %w", err)
 	}
-	if err := verifyOwnership(markers, ownershipPrefix+r.ownerID, true); err != nil {
-		return fmt.Errorf("verify %s: %w", publication.Name, err)
-	}
-	for _, expected := range []struct {
+	wantedSets := []struct {
 		recordType RecordType
 		addresses  []netip.Addr
 	}{
 		{recordType: RecordAAAA, addresses: publication.Addresses},
 		{recordType: RecordA, addresses: publication.EdgeAddresses},
-	} {
+	}
+	// List before judging ownership: with neither marker nor records, the
+	// truthful failure is the record-count mismatch below, not an ownership
+	// complaint about records that do not exist.
+	listed := make([][]Record, len(wantedSets))
+	recordsExist := false
+	for index, expected := range wantedSets {
 		records, err := r.provider.List(ctx, publication.Name, expected.recordType)
 		if err != nil {
 			return fmt.Errorf("list %s records: %w", expected.recordType, err)
 		}
+		listed[index] = records
+		recordsExist = recordsExist || len(records) > 0
+	}
+	if err := verifyOwnership(markers, ownershipPrefix+r.ownerID, recordsExist); err != nil {
+		return fmt.Errorf("verify %s: %w", publication.Name, err)
+	}
+	for index, expected := range wantedSets {
+		records := listed[index]
 		wanted := make(map[netip.Addr]struct{}, len(expected.addresses))
 		for _, address := range expected.addresses {
 			wanted[address] = struct{}{}

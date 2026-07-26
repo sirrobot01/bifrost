@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,12 +26,26 @@ func answerFile(t *testing.T, answers ...string) *os.File {
 	return file
 }
 
+func TestGuessZoneKnowsSharedSuffixes(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"media.example.com":        "example.com",
+		"example.com":              "example.com",
+		"plex.sirrobot01.dedyn.io": "sirrobot01.dedyn.io",
+		"a.home.example.dynv6.net": "example.dynv6.net",
+	}
+	for name, want := range tests {
+		if got := guessZone(name); got != want {
+			t.Errorf("guessZone(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestRunnerInitInteractiveCreatesEveryFile(t *testing.T) {
 	t.Parallel()
 
 	configDir := filepath.Join(t.TempDir(), "bifrost")
-	// deSEC needs no zone lookup, so this exercises the whole flow without
-	// reaching a provider API.
 	stdin := answerFile(t,
 		configDir,           // configuration directory
 		"media",             // service name
@@ -39,13 +54,19 @@ func TestRunnerInitInteractiveCreatesEveryFile(t *testing.T) {
 		"443",               // public port
 		"auto",              // mode
 		"desec",             // DNS provider
-		"example.com",       // zone
 		"desec-token-value", // token
+		"",                  // zone: accept the discovered default
 		"y",                 // write the files
 	)
 
 	var stdout, stderr bytes.Buffer
-	runner := Runner{Stdout: &stdout, Stderr: &stderr, Stdin: stdin, Version: "test"}
+	runner := Runner{Stdout: &stdout, Stderr: &stderr, Stdin: stdin, Version: "test",
+		zoneLookup: func(_ context.Context, provider, token, dnsName string) (string, error) {
+			if provider != "desec" || token != "desec-token-value" || dnsName != "media.example.com" {
+				t.Errorf("lookup got provider=%q token=%q name=%q", provider, token, dnsName)
+			}
+			return "example.com", nil
+		}}
 	if code := runner.Run(t.Context(), []string{"init", "--interactive", "--interface", "lo", "--config-dir", configDir}); code != 0 {
 		t.Fatalf("code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
 	}

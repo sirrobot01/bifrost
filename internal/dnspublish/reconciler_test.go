@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -195,6 +196,82 @@ func TestReconcilerVerifyChecksOwnedStateWithoutMutation(t *testing.T) {
 	provider.records[1].Content = "2001:db8::11"
 	if err := reconciler.Verify(t.Context(), publication); err == nil {
 		t.Fatal("Verify accepted drifted DNS state")
+	}
+}
+
+func TestReconcilerPreflight(t *testing.T) {
+	t.Parallel()
+
+	clean, err := NewReconciler(&memoryProvider{}, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clean.Preflight(t.Context(), "media.example.com"); err != nil {
+		t.Fatalf("clean zone failed preflight: %v", err)
+	}
+
+	owned, err := NewReconciler(&memoryProvider{records: []Record{
+		{ID: "owner", Type: RecordTXT, Name: "_bifrost.media.example.com", Content: "bifrost-owner=host-1", TTL: 60},
+		{ID: "ipv6", Type: RecordAAAA, Name: "media.example.com", Content: "2001:db8::10", TTL: 60},
+	}}, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owned.Preflight(t.Context(), "media.example.com"); err != nil {
+		t.Fatalf("owned zone failed preflight: %v", err)
+	}
+
+	foreign, err := NewReconciler(&memoryProvider{records: []Record{
+		{ID: "manual", Type: RecordAAAA, Name: "media.example.com", Content: "2001:db8::99", TTL: 60},
+	}}, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := foreign.Preflight(t.Context(), "media.example.com"); err == nil || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("foreign records passed preflight: %v", err)
+	}
+}
+
+func TestReconcilerVerifyReportsUnpublishedNameAsMissingRecords(t *testing.T) {
+	t.Parallel()
+
+	reconciler, err := NewReconciler(&memoryProvider{}, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = reconciler.Verify(t.Context(), Publication{
+		Name:      "media.example.com",
+		Addresses: []netip.Addr{netip.MustParseAddr("2001:db8::10")},
+		TTL:       time.Minute,
+	})
+	if err == nil {
+		t.Fatal("Verify accepted an unpublished name")
+	}
+	if strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("unpublished name reported as an ownership conflict: %v", err)
+	}
+	if !strings.Contains(err.Error(), "record count is 0") {
+		t.Fatalf("error does not name the missing records: %v", err)
+	}
+}
+
+func TestReconcilerVerifyStillRefusesForeignRecords(t *testing.T) {
+	t.Parallel()
+
+	provider := &memoryProvider{records: []Record{
+		{ID: "manual", Type: RecordAAAA, Name: "media.example.com", Content: "2001:db8::99", TTL: 60},
+	}}
+	reconciler, err := NewReconciler(provider, "host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = reconciler.Verify(t.Context(), Publication{
+		Name:      "media.example.com",
+		Addresses: []netip.Addr{netip.MustParseAddr("2001:db8::99")},
+		TTL:       time.Minute,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("foreign records did not fail on ownership: %v", err)
 	}
 }
 
