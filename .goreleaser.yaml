@@ -39,6 +39,47 @@ archives:
       - docs/src/content/docs/**/*
       - examples/*
 
+nfpms:
+  - id: bifrost
+    package_name: bifrost
+    vendor: Bifrost
+    homepage: https://bifrost.biodun.dev
+    maintainer: Mukhtar Akere <akeremukhtar10@gmail.com>
+    description: IPv6-native ingress that publishes self-hosted TCP services from a CGNAT home network.
+    license: MIT
+    section: net
+    formats:
+      - deb
+      - rpm
+    # The version is deliberately absent from the file name so that
+    # /releases/latest/download/bifrost_linux_amd64.deb resolves. That URL is
+    # the first command in the quickstart, and it cannot carry a version.
+    # The package metadata still records the version.
+    file_name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}'
+    # Distribution packages own /usr, so the binary goes to /usr/bin and the
+    # drop-ins below repoint the shipped units at it.
+    bindir: /usr/bin
+    contents:
+      - src: deploy/bifrost.service
+        dst: /lib/systemd/system/bifrost.service
+      - src: deploy/packaging/bifrost.service.d/10-package-path.conf
+        dst: /lib/systemd/system/bifrost.service.d/10-package-path.conf
+      - src: deploy/bifrost-edge.service
+        dst: /lib/systemd/system/bifrost-edge.service
+      - src: deploy/packaging/bifrost-edge.service.d/10-package-path.conf
+        dst: /lib/systemd/system/bifrost-edge.service.d/10-package-path.conf
+      - src: configs/bifrost.example.yaml
+        dst: /usr/share/doc/bifrost/config.example.yaml
+      - src: configs/edge.example.yaml
+        dst: /usr/share/doc/bifrost/edge.example.yaml
+      - src: examples/compose.yaml
+        dst: /usr/share/doc/bifrost/compose.yaml
+    scripts:
+      preinstall: deploy/packaging/preinstall.sh
+      postinstall: deploy/packaging/postinstall.sh
+      preremove: deploy/packaging/preremove.sh
+      postremove: deploy/packaging/postremove.sh
+
 checksum:
   name_template: checksums.txt
   algorithm: sha256

@@ -31,6 +31,45 @@ jobs:
           version: v2.17.0
           args: check
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.17.0
+          args: release --snapshot --clean --skip=sign
+      # The package is the shortest setup path, so install it for real rather
+      # than trusting that the archive contents look right.
+      - run: sudo apt-get install -y ./dist/*_linux_amd64.deb
+      - name: Verify the installed layout
+        run: |
+          set -eux
+          test -x /usr/bin/bifrost
+          test -f /lib/systemd/system/bifrost.service
+          test -f /lib/systemd/system/bifrost.service.d/10-package-path.conf
+          getent passwd bifrost
+          getent passwd bifrost-edge
+          # The address secret and DNS credentials live here, so the directory
+          # must not be group or world readable.
+          test "$(stat -c '%U:%G:%a' /etc/bifrost)" = "bifrost:bifrost:750"
+          systemd-analyze verify /lib/systemd/system/bifrost.service
+          bifrost version
+      - name: Verify doctor runs without a configuration
+        run: |
+          set -eux
+          # A host with no usable IPv6 must still produce a report and exit 1,
+          # never a usage error about a missing config file.
+          bifrost doctor --offline --json > report.json || test $? -eq 1
+          jq -e '.findings | length > 0' report.json
+      - run: sudo apt-get remove -y bifrost
+
   docs:
     runs-on: ubuntu-latest
     defaults:
