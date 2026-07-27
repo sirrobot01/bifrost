@@ -180,6 +180,8 @@ acme:
 
 The challenge TXT records use `dns.ttl`, so provider minimums such as deSEC's 3600-second floor hold for challenges too. A service with `tls: off` never touches ACME.
 
+Requesting a certificate accepts the certificate authority's subscriber agreement on your behalf, as every ACME client does. No account setup is needed: Bifrost creates and stores the ACME account key itself. Let's Encrypt rate-limits issuance per domain; when testing repeatedly, set `directory` to the [staging environment](https://letsencrypt.org/docs/staging-environment/) first.
+
 ## Configure a static service
 
 This example publishes an IPv4-only backend through splice mode:
