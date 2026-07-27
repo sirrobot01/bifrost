@@ -267,13 +267,41 @@ func (c *Controller) Sweep(ctx context.Context) ([]Action, error) {
 	return actions, nil
 }
 
+// Shutdown withdraws every publication, drains the listeners, and releases
+// managed addresses. Withdraws run first so records disappear while
+// connections wind down, and a slow drain can never starve them of the stop
+// budget. Drains run concurrently: sequential drains would stack grace
+// periods until systemd's stop timeout killed the process.
 func (c *Controller) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var shutdownErrors []error
 	for id, state := range c.services {
-		if err := c.removeState(ctx, state); err != nil {
-			shutdownErrors = append(shutdownErrors, fmt.Errorf("remove service %q: %w", id, err))
+		if err := c.config.Publisher.Withdraw(ctx, state.spec.DNSName); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("withdraw service %q: %w", id, err))
+		}
+	}
+	var wg sync.WaitGroup
+	var drainMu sync.Mutex
+	for id, state := range c.services {
+		for _, endpoint := range state.endpoints {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := c.drainEndpoint(ctx, endpoint); err != nil {
+					drainMu.Lock()
+					shutdownErrors = append(shutdownErrors, fmt.Errorf("drain service %q: %w", id, err))
+					drainMu.Unlock()
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	for id, state := range c.services {
+		for _, endpoint := range state.endpoints {
+			if err := c.releaseEndpoint(endpoint); err != nil {
+				shutdownErrors = append(shutdownErrors, fmt.Errorf("release service %q: %w", id, err))
+			}
 		}
 		delete(c.services, id)
 	}
@@ -428,16 +456,33 @@ func (c *Controller) removeState(ctx context.Context, state *serviceState) error
 }
 
 func (c *Controller) teardownEndpoint(ctx context.Context, endpoint *endpoint) error {
-	var teardownErrors []error
-	if endpoint.splicer != nil {
-		drainContext, cancel := context.WithTimeout(ctx, c.config.DrainGrace)
-		teardownErrors = append(teardownErrors, endpoint.splicer.Shutdown(drainContext))
-		cancel()
+	return errors.Join(c.drainEndpoint(ctx, endpoint), c.releaseEndpoint(endpoint))
+}
+
+func (c *Controller) drainEndpoint(ctx context.Context, endpoint *endpoint) error {
+	if endpoint.splicer == nil {
+		return nil
 	}
-	if endpoint.lease != nil {
-		teardownErrors = append(teardownErrors, c.config.Addresses.Remove(*endpoint.lease))
+	if active := endpoint.splicer.Status().ActiveConnections; active > 0 {
+		c.config.Logger.Info("draining connections", "address", endpoint.address.String(), "active", active, "grace", c.config.DrainGrace.String())
 	}
-	return errors.Join(teardownErrors...)
+	drainContext, cancel := context.WithTimeout(ctx, c.config.DrainGrace)
+	defer cancel()
+	err := endpoint.splicer.Shutdown(drainContext)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		// Connections held past the grace period were force closed. That is
+		// the drain policy completing, not a failure.
+		c.config.Logger.Warn("force closed connections after drain grace", "address", endpoint.address.String())
+		return nil
+	}
+	return err
+}
+
+func (c *Controller) releaseEndpoint(endpoint *endpoint) error {
+	if endpoint.lease == nil {
+		return nil
+	}
+	return c.config.Addresses.Remove(*endpoint.lease)
 }
 
 func (c *Controller) managedAddresses() map[netip.Addr]struct{} {

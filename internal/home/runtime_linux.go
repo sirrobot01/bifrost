@@ -191,13 +191,22 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer dockerResync.Stop()
 	var latest netwatch.Snapshot
 	pending := false
+	consecutiveFailures := 0
 
 	for {
 		select {
 		case <-ctx.Done():
-			shutdownContext, cancel := context.WithTimeout(context.Background(), r.config.DrainGrace.Duration())
+			// The drain consumes up to drain_grace; the margin keeps the DNS
+			// withdraws and address removals from being starved by it.
+			shutdownContext, cancel := context.WithTimeout(context.Background(), r.config.DrainGrace.Duration()+30*time.Second)
 			defer cancel()
-			return r.controller.Shutdown(shutdownContext)
+			if err := r.controller.Shutdown(shutdownContext); err != nil {
+				// The next start reconciles provider state from scratch, so an
+				// incomplete withdraw must not turn a routine stop into a
+				// failed unit.
+				r.logger.Error("shutdown left provider state behind", "error", err)
+			}
+			return nil
 		case err := <-observerResult:
 			if ctx.Err() != nil {
 				continue
@@ -211,6 +220,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 		case snapshot := <-snapshots:
 			latest = snapshot
 			pending = true
+			// New network state is new information: retry promptly even when
+			// earlier reconciles were failing.
+			consecutiveFailures = 0
 			if !settleTimer.Stop() {
 				select {
 				case <-settleTimer.C:
@@ -225,6 +237,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 			if latest.InterfaceName != "" {
 				pending = true
+				consecutiveFailures = 0
 				if !settleTimer.Stop() {
 					select {
 					case <-settleTimer.C:
@@ -243,11 +256,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 		case <-settleTimer.C:
 			if pending {
 				if err := r.reconcile(ctx, latest); err != nil {
+					consecutiveFailures++
+					delay := reconcileBackoff(r.config.SettleWindow.Duration(), consecutiveFailures)
 					r.markReconcile(err)
-					r.logger.Error("service reconciliation failed", "error", err)
-					settleTimer.Reset(r.config.SettleWindow.Duration())
+					r.logger.Error("service reconciliation failed", "error", err, "retry_in", delay.String())
+					settleTimer.Reset(delay)
 					continue
 				}
+				consecutiveFailures = 0
 				r.markReconcile(nil)
 				pending = false
 			}

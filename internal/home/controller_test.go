@@ -2,6 +2,7 @@ package home
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"slices"
 	"testing"
@@ -58,14 +59,15 @@ func (p *fakePublisher) Prune(context.Context, []string) error {
 }
 
 type fakeSplicer struct {
-	address  netip.AddrPort
-	shutdown int
+	address     netip.AddrPort
+	shutdown    int
+	shutdownErr error
 }
 
 func (s *fakeSplicer) Address() netip.AddrPort         { return s.address }
 func (s *fakeSplicer) Status() exposure.Status         { return exposure.Status{} }
 func (s *fakeSplicer) Serve(ctx context.Context) error { <-ctx.Done(); return nil }
-func (s *fakeSplicer) Shutdown(context.Context) error  { s.shutdown++; return nil }
+func (s *fakeSplicer) Shutdown(context.Context) error  { s.shutdown++; return s.shutdownErr }
 
 type controllerFixture struct {
 	controller *Controller
@@ -123,6 +125,49 @@ func TestControllerPreparesSpliceBeforePublishing(t *testing.T) {
 	status := fixture.controller.Status()
 	if len(status) != 1 || status[0].Mode != ModeSplice || status[0].ClientIPPreserved {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestControllerShutdownToleratesDrainDeadline(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.splicers) != 1 {
+		t.Fatalf("splicers = %d", len(fixture.splicers))
+	}
+	// A connection held past the grace period forces the splicer to cut it and
+	// report the deadline. That is drain policy completing, not a failure.
+	fixture.splicers[0].shutdownErr = errors.Join(nil, context.DeadlineExceeded)
+	if err := fixture.controller.Shutdown(t.Context()); err != nil {
+		t.Fatalf("drain deadline surfaced as shutdown failure: %v", err)
+	}
+	if len(fixture.publisher.withdrawn) != 1 || fixture.publisher.withdrawn[0] != "media.example.com" {
+		t.Fatalf("withdrawn = %v", fixture.publisher.withdrawn)
+	}
+	if fixture.splicers[0].shutdown != 1 {
+		t.Fatalf("splicer shutdown calls = %d", fixture.splicers[0].shutdown)
+	}
+}
+
+func TestReconcileBackoffDoublesToCeiling(t *testing.T) {
+	t.Parallel()
+
+	settle := 10 * time.Second
+	tests := map[int]time.Duration{
+		1:  10 * time.Second,
+		2:  20 * time.Second,
+		4:  80 * time.Second,
+		6:  320 * time.Second,
+		7:  10 * time.Minute,
+		50: 10 * time.Minute,
+	}
+	for failures, want := range tests {
+		if got := reconcileBackoff(settle, failures); got != want {
+			t.Errorf("reconcileBackoff(%v, %d) = %v, want %v", settle, failures, got, want)
+		}
 	}
 }
 
