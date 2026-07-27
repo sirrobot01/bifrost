@@ -157,7 +157,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	}
 	services := make([]diagnose.Service, 0, len(resolved.Services))
 	for _, service := range resolved.Services {
-		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true, ClientIPPreserved: service.ClientIPPreserved})
+		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true, ClientIPPreserved: service.ClientIPPreserved, TLS: service.TerminatesTLS})
 	}
 	if len(services) == 0 {
 		return 0, errors.New("config has no services to check")

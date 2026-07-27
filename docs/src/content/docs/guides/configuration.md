@@ -162,6 +162,24 @@ dns:
 
 `server` must include a port. Configure both `key_name` and `key_file`, or omit both fields.
 
+## Configure automatic certificates
+
+Splice services terminate TLS by default. The certificate for each published name is obtained and renewed through ACME DNS-01 challenges, using the same DNS provider credentials configured above, so no additional accounts or ports are needed. Renewal runs 30 days before expiry.
+
+```yaml
+acme:
+  email: you@example.com
+  state_dir: /var/lib/bifrost
+```
+
+| Field | Requirement |
+|---|---|
+| `email` | Optional. Receives expiry warnings from the certificate authority. |
+| `directory` | Optional ACME directory URL; empty means Let's Encrypt. Use the Let's Encrypt staging URL to test without rate limits. |
+| `state_dir` | Holds the ACME account key and issued certificates. The packages create `/var/lib/bifrost` through systemd. |
+
+The challenge TXT records use `dns.ttl`, so provider minimums such as deSEC's 3600-second floor hold for challenges too. A service with `tls: off` never touches ACME.
+
 ## Configure a static service
 
 This example publishes an IPv4-only backend through splice mode:
@@ -186,6 +204,7 @@ static_services:
 | `listen` | Set the public TCP port. |
 | `dns` | Set the public DNS name. |
 | `mode` | Use `direct`, `splice`, or `auto`. |
+| `tls` | Use `auto` (the default) to terminate TLS with an automatic certificate on the splice listener, or `off` for a backend that speaks TLS itself. Direct mode ignores it. |
 | `public_address` | Set the backend IPv6 address when direct mode needs an explicit address. |
 | `proxy_protocol` | Enable this only when the backend accepts PROXY v2. |
 | `edge` | Enable this only for a configured IPv4 edge. |

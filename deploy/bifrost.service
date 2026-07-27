@@ -28,6 +28,9 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
+# Holds the ACME account key and issued certificates under /var/lib/bifrost.
+StateDirectory=bifrost
+StateDirectoryMode=0700
 RemoveIPC=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 RestrictNamespaces=yes

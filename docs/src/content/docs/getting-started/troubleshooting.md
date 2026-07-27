@@ -90,6 +90,10 @@ Reported only when you pass `--docker-socket`. Docker socket access grants root-
 
 The derived service address is missing from the host. The service is not running, or it has not reconciled yet. Read `systemctl status bifrost` and the daemon logs.
 
+### `tls`
+
+The listener's certificate failed the handshake, is close to expiry, or has expired. Issuance and renewal errors appear in the serve log; the usual causes are the provider rejecting the challenge record (check `dns-owner` and the provider credentials) or the CA being unreachable from the host. Renewal runs 30 days before expiry, so any expiry warning means renewals have been failing for a while.
+
 ### `listener`
 
 The address exists but nothing accepts TCP on the published port. In splice mode Bifrost owns that listener, so this points at the daemon. In direct mode the backend owns it, so confirm the backend is listening on the public address.

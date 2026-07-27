@@ -3,6 +3,7 @@ package home
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,15 @@ type Splicer interface {
 
 type ListenerFactory func(context.Context, exposure.Config) (Splicer, error)
 
+// CertificateSource issues and serves certificates for splice services that
+// terminate TLS.
+type CertificateSource interface {
+	// Certificate blocks until a usable certificate for name exists.
+	Certificate(ctx context.Context, name string) (*tls.Certificate, error)
+	// TLSConfig serves name's current certificate and follows renewals.
+	TLSConfig(name string) *tls.Config
+}
+
 type Action struct {
 	Service string `json:"service"`
 	Kind    string `json:"kind"`
@@ -60,17 +70,19 @@ type ServiceStatus struct {
 }
 
 type ControllerConfig struct {
-	Addresses         AddressManager
-	Deriver           serviceaddr.Deriver
-	Publisher         Publisher
-	Listen            ListenerFactory
-	TTL               time.Duration
-	DrainGrace        time.Duration
-	DialTimeout       time.Duration
-	IdleTimeout       time.Duration
-	Logger            *slog.Logger
-	Now               func() time.Time
-	CheckDirect       func(context.Context, netip.AddrPort) error
+	Addresses   AddressManager
+	Deriver     serviceaddr.Deriver
+	Publisher   Publisher
+	Listen      ListenerFactory
+	TTL         time.Duration
+	DrainGrace  time.Duration
+	DialTimeout time.Duration
+	IdleTimeout time.Duration
+	Logger      *slog.Logger
+	Now         func() time.Time
+	CheckDirect func(context.Context, netip.AddrPort) error
+	// Certificates enables TLS termination for services that ask for it.
+	Certificates      CertificateSource
 	PrefixOverride    netip.Prefix
 	GlobalLimiter     *exposure.Limiter
 	EdgeVerifier      *edgeauth.Verifier
@@ -202,6 +214,9 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 
 		actions = append(actions, Action{Service: id, Kind: "prepare", Detail: fmt.Sprintf("%s address %s", mode, address)})
 		if dryRun {
+			if mode == ModeSplice && service.TLS {
+				actions = append(actions, Action{Service: id, Kind: "certificate", Detail: "obtain or reuse a certificate for " + service.DNSName + " via dns-01"})
+			}
 			actions = append(actions, Action{Service: id, Kind: "publish", Detail: fmt.Sprintf("AAAA %s -> %s", service.DNSName, address)})
 			continue
 		}
@@ -376,6 +391,20 @@ func (c *Controller) prepareEndpoint(ctx context.Context, service Service, mode 
 	}
 	result.address = lease.Prefix.Addr()
 	result.lease = &lease
+	var tlsConfig *tls.Config
+	if service.TLS {
+		if c.config.Certificates == nil {
+			_ = c.config.Addresses.Remove(lease)
+			return nil, errors.New("service terminates TLS but no certificate manager is configured")
+		}
+		// Certificate issuance is part of prepare: the name is published only
+		// after the listener can actually serve it.
+		if _, err := c.config.Certificates.Certificate(ctx, service.DNSName); err != nil {
+			_ = c.config.Addresses.Remove(lease)
+			return nil, fmt.Errorf("obtain certificate for %s: %w", service.DNSName, err)
+		}
+		tlsConfig = c.config.Certificates.TLSConfig(service.DNSName)
+	}
 	listener, err := c.config.Listen(ctx, exposure.Config{
 		ServiceID:         service.ID,
 		ListenAddress:     netip.AddrPortFrom(result.address, service.ListenPort),
@@ -389,6 +418,7 @@ func (c *Controller) prepareEndpoint(ctx context.Context, service Service, mode 
 		EdgeHeaderTimeout: c.config.EdgeHeaderTimeout,
 		EdgeIdentity:      service.DNSName,
 		Logger:            c.config.Logger,
+		TLS:               tlsConfig,
 	})
 	if err != nil {
 		_ = c.config.Addresses.Remove(lease)

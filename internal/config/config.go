@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -28,7 +29,18 @@ type Config struct {
 	Metrics        Metrics         `yaml:"metrics"`
 	Docker         Docker          `yaml:"docker"`
 	Edge           Edge            `yaml:"edge"`
+	ACME           ACME            `yaml:"acme,omitempty"`
 	StaticServices []StaticService `yaml:"static_services"`
+}
+
+// ACME configures automatic certificates for services that terminate TLS.
+type ACME struct {
+	// Email receives certificate expiry warnings from the CA. Optional.
+	Email string `yaml:"email,omitempty"`
+	// Directory selects the ACME service; empty means Let's Encrypt.
+	Directory string `yaml:"directory,omitempty"`
+	// StateDir holds the account key and issued certificates.
+	StateDir string `yaml:"state_dir"`
 }
 
 type DNS struct {
@@ -97,6 +109,16 @@ type StaticService struct {
 	PublicAddress string `yaml:"public_address,omitempty"`
 	ProxyProtocol bool   `yaml:"proxy_protocol"`
 	Edge          bool   `yaml:"edge"`
+	// TLS controls termination when Bifrost owns the listener: "auto" obtains
+	// a certificate through ACME and terminates, "off" passes raw TCP through.
+	// Empty means auto. Direct mode ignores it: the backend owns the socket.
+	TLS string `yaml:"tls,omitempty"`
+}
+
+// TerminatesTLS reports whether the service wants Bifrost to terminate TLS on
+// its splice listener.
+func (s StaticService) TerminatesTLS() bool {
+	return s.TLS != "off"
 }
 
 type Duration time.Duration
@@ -150,11 +172,17 @@ func (c *Config) ApplyDefaults() {
 		if c.StaticServices[index].Mode == "" {
 			c.StaticServices[index].Mode = "auto"
 		}
+		if c.StaticServices[index].TLS == "" {
+			c.StaticServices[index].TLS = "auto"
+		}
 		if c.StaticServices[index].Listen == 0 {
 			if backend, err := netip.ParseAddrPort(c.StaticServices[index].Backend); err == nil {
 				c.StaticServices[index].Listen = backend.Port()
 			}
 		}
+	}
+	if c.ACME.StateDir == "" {
+		c.ACME.StateDir = "/var/lib/bifrost"
 	}
 }
 
@@ -202,6 +230,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.Edge.validate(); err != nil {
 		return fmt.Errorf("edge: %w", err)
+	}
+	if err := c.ACME.validate(); err != nil {
+		return fmt.Errorf("acme: %w", err)
 	}
 	for _, service := range c.StaticServices {
 		if service.Edge && !c.Edge.Enabled {
@@ -297,6 +328,16 @@ func (e Edge) validate() error {
 	return nil
 }
 
+func (a ACME) validate() error {
+	if !filepath.IsAbs(a.StateDir) {
+		return errors.New("state_dir must be an absolute path")
+	}
+	if a.Directory != "" && !strings.HasPrefix(a.Directory, "https://") {
+		return errors.New("directory must be an https URL")
+	}
+	return nil
+}
+
 func validateServices(services []StaticService) error {
 	seenNames := make(map[string]struct{}, len(services))
 	seenSockets := make(map[string]string, len(services))
@@ -332,6 +373,9 @@ func (s StaticService) Validate() error {
 	}
 	if s.Mode != "auto" && s.Mode != "direct" && s.Mode != "splice" {
 		return errors.New("mode must be auto, direct, or splice")
+	}
+	if s.TLS != "" && s.TLS != "auto" && s.TLS != "off" {
+		return errors.New("tls must be auto or off")
 	}
 	if s.Mode == "direct" {
 		if !backend.Addr().Is6() || backend.Port() != s.Listen || backend.Addr().IsPrivate() {

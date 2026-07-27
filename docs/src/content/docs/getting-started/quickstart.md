@@ -92,7 +92,7 @@ The Cloudflare token needs `Zone:Read` and `DNS:Edit` on the zone that serves yo
 
 Nothing is written until you answer the last question.
 
-The public port is 8096, not 443, because this publishes Jellyfin's plain HTTP listener and Bifrost does not terminate TLS. To serve `https://media.example.com` on 443, put a TLS server in front of Jellyfin and publish that instead. See [Jellyfin](../../applications/jellyfin/).
+The public port is 8096, matching Jellyfin's own port so the URL stays predictable. Bifrost terminates TLS on the listener with an automatically issued certificate for `media.example.com`, so clients connect with `https://` even though Jellyfin itself speaks plain HTTP. A backend that handles TLS itself, such as Plex, sets `tls: off` and passes raw TCP through.
 
 ## 4. Permit inbound IPv6 on the router
 
@@ -127,16 +127,16 @@ sudo bifrost check --config /etc/bifrost/config.yaml
 From an IPv6 client elsewhere:
 
 ```sh
-curl -6 -sI http://media.example.com:8096/
+curl -6 -sI https://media.example.com:8096/
 ```
 
-The URL uses `http` and the public port because the example publishes Jellyfin's plain HTTP listener.
+The URL uses `https` because Bifrost terminates TLS on the listener with a certificate for the published name; Jellyfin itself keeps speaking plain HTTP behind it.
 
 ## What you have now
 
 Bifrost holds a dedicated IPv6 address for Jellyfin, keeps the AAAA record for `media.example.com` pointing at it, and re-derives both when your ISP changes your prefix. Traffic reaches Jellyfin over IPv6 without a relay.
 
-The service is published to the internet. Bifrost does not terminate TLS, issue certificates, or authenticate users. Securing the application remains yours.
+The service is published to the internet with a valid certificate. Bifrost does not authenticate users: anyone who reaches the name gets the application's own login screen, so the application's authentication and updates remain yours to keep healthy.
 
 ## Next
 

@@ -61,6 +61,6 @@ Bifrost cannot open the firewall on an ISP router. Bifrost cannot create an IPv6
 
 ## Product limits
 
-Bifrost supports TCP in v1. It does not terminate TLS. It does not issue certificates. It does not add user authentication. It does not proxy UDP or QUIC. It does not change application configuration.
+Bifrost supports TCP in v1. Splice services terminate TLS by default, with certificates issued automatically through the configured DNS provider. Direct services and `tls: off` pass raw TCP through. Bifrost does not add user authentication. It does not proxy UDP or QUIC. It does not change application configuration.
 
 Bifrost is not a VPN. Bifrost is not a hole-punching system. Clients do not need Bifrost software.

@@ -3,7 +3,7 @@ title: Security model
 description: Trust boundaries and safe deployment requirements.
 ---
 
-Bifrost publishes applications to the internet. It is not an authentication service, web application firewall, VPN, or certificate manager.
+Bifrost publishes applications to the internet. It terminates TLS for splice services and manages their certificates, but it is not an authentication service, web application firewall, or VPN. Certificate private keys and the ACME account key live in `acme.state_dir` (default `/var/lib/bifrost`), readable only by the service account.
 
 Every published backend must provide its own authentication, updates, and rate controls.
 

@@ -112,7 +112,7 @@ The local server provides `/healthz`, `/status`, and Prometheus `/metrics`. Logs
 
 ## Limits
 
-Bifrost supports TCP in v1. It does not end TLS, issue certificates, authenticate users, proxy UDP or QUIC, change application settings, or bypass vendor licensing.
+Bifrost supports TCP in v1. Splice services terminate TLS with automatically issued certificates by default; direct services and `tls: off` pass raw TCP through. Bifrost does not authenticate users, proxy UDP or QUIC, change application settings, or bypass vendor licensing.
 
 Use an HTTP CDN proxy or a tunnel when it meets the requirements. Use Bifrost when a direct IPv6 path or a non-HTTP, high-bandwidth service must avoid a full-time relay.
 

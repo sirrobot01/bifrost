@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirrobot01/bifrost/internal/certauto"
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
@@ -22,19 +23,20 @@ import (
 )
 
 type Runtime struct {
-	config     config.Config
-	observer   *netwatch.Observer
-	controller *Controller
-	services   []Service
-	publisher  *dnspublish.Reconciler
-	docker     *dockerwatch.Client
-	logger     *slog.Logger
-	metrics    *observability.Server
-	stateMu    sync.RWMutex
-	startedAt  time.Time
-	lastRun    time.Time
-	lastError  string
-	ready      bool
+	config       config.Config
+	observer     *netwatch.Observer
+	controller   *Controller
+	services     []Service
+	publisher    *dnspublish.Reconciler
+	certificates *certauto.Manager
+	docker       *dockerwatch.Client
+	logger       *slog.Logger
+	metrics      *observability.Server
+	stateMu      sync.RWMutex
+	startedAt    time.Time
+	lastRun      time.Time
+	lastError    string
+	ready        bool
 }
 
 func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error) {
@@ -99,10 +101,22 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
+	certificates, err := certauto.NewManager(certauto.Config{
+		Provider:     provider,
+		StateDir:     configFile.ACME.StateDir,
+		Email:        configFile.ACME.Email,
+		DirectoryURL: configFile.ACME.Directory,
+		ChallengeTTL: configFile.DNS.TTL.Duration(),
+		Logger:       logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("certificate manager: %w", err)
+	}
 	controller, err := NewController(ControllerConfig{
-		Addresses: addressManager,
-		Deriver:   deriver,
-		Publisher: publisher,
+		Addresses:    addressManager,
+		Deriver:      deriver,
+		Publisher:    publisher,
+		Certificates: certificates,
 		Listen: func(ctx context.Context, listenerConfig exposure.Config) (Splicer, error) {
 			return exposure.Listen(ctx, listenerConfig)
 		},
@@ -126,7 +140,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
-	runtime := &Runtime{config: configFile, observer: observer, controller: controller, services: services, publisher: publisher, docker: dockerClient, logger: logger, startedAt: time.Now()}
+	runtime := &Runtime{config: configFile, observer: observer, controller: controller, services: services, publisher: publisher, certificates: certificates, docker: dockerClient, logger: logger, startedAt: time.Now()}
 	metricsServer, err := observability.NewServer(configFile.Metrics.Listen, runtime.observabilitySnapshot)
 	if err != nil {
 		return nil, err
@@ -189,6 +203,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer sweep.Stop()
 	dockerResync := time.NewTicker(30 * time.Second)
 	defer dockerResync.Stop()
+	certificateRenewal := time.NewTicker(time.Hour)
+	defer certificateRenewal.Stop()
 	var latest netwatch.Snapshot
 	pending := false
 	consecutiveFailures := 0
@@ -252,6 +268,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 				case dockerChanges <- struct{}{}:
 				default:
 				}
+			}
+		case <-certificateRenewal.C:
+			renewed, err := r.certificates.RenewDue(ctx)
+			for _, name := range renewed {
+				r.logger.Info("renewed certificate", "name", name)
+			}
+			if err != nil {
+				r.logger.Error("certificate renewal failed", "error", err)
 			}
 		case <-settleTimer.C:
 			if pending {

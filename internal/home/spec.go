@@ -26,6 +26,9 @@ type Service struct {
 	Edge           bool
 	EdgeAddress    netip.Addr
 	MaxConnections int
+	// TLS asks Bifrost to terminate TLS on the splice listener with an
+	// automatically issued certificate. Direct mode ignores it.
+	TLS bool
 }
 
 func (s Service) validate() error {

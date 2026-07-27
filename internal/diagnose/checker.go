@@ -2,6 +2,7 @@ package diagnose
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +18,9 @@ type Service struct {
 	Port              uint16
 	CheckLocal        bool
 	ClientIPPreserved bool
+	// TLS marks services whose listener terminates TLS, so check can judge
+	// the served certificate.
+	TLS bool
 }
 
 type Input struct {
@@ -131,6 +135,38 @@ func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 	}
 }
 
+// tlsFinding performs a TLS handshake against the service listener and
+// judges the served certificate: it must verify for the DNS name and not be
+// close to expiry, since renewal runs 30 days out and anything nearer means
+// renewals have been failing.
+func (c *Checker) tlsFinding(ctx context.Context, service Service) Finding {
+	connection, err := c.dial(ctx, "tcp6", netip.AddrPortFrom(service.Address, service.Port).String())
+	if err != nil {
+		return Finding{Check: "tls", Severity: SeverityError, Summary: service.Name + ": TLS listener is unreachable", Detail: err.Error()}
+	}
+	defer func() { _ = connection.Close() }()
+	client := tls.Client(connection, &tls.Config{ServerName: service.DNSName})
+	if err := client.HandshakeContext(ctx); err != nil {
+		return Finding{
+			Check:       "tls",
+			Severity:    SeverityError,
+			Summary:     service.Name + ": TLS handshake failed",
+			Detail:      err.Error(),
+			Remediation: "confirm certificate issuance succeeded in the serve log, then re-run check",
+		}
+	}
+	leaf := client.ConnectionState().PeerCertificates[0]
+	remaining := leaf.NotAfter.Sub(c.now())
+	days := int(remaining.Hours() / 24)
+	if remaining <= 0 {
+		return Finding{Check: "tls", Severity: SeverityError, Summary: service.Name + ": certificate has expired", Detail: "expired " + leaf.NotAfter.Format(time.RFC3339), Remediation: "check certificate renewal errors in the serve log"}
+	}
+	if remaining < 14*24*time.Hour {
+		return Finding{Check: "tls", Severity: SeverityWarning, Summary: fmt.Sprintf("%s: certificate expires in %d days", service.Name, days), Remediation: "renewal runs 30 days before expiry; check renewal errors in the serve log"}
+	}
+	return Finding{Check: "tls", Severity: SeverityInfo, Summary: service.Name + ": certificate is valid", Detail: fmt.Sprintf("expires in %d days", days)}
+}
+
 func (c *Checker) serviceFindings(ctx context.Context, service Service, local map[netip.Addr]struct{}, interfaceMTU int, prober ExternalProber) []Finding {
 	findings := make([]Finding, 0, 5)
 	if service.ClientIPPreserved {
@@ -151,6 +187,10 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 		} else {
 			findings = append(findings, Finding{Check: "address", Severity: SeverityError, Summary: service.Name + ": service address is missing from the host"})
 		}
+	}
+
+	if service.CheckLocal && service.TLS {
+		findings = append(findings, c.tlsFinding(ctx, service))
 	}
 
 	findings = append(findings, c.dnsFinding(ctx, service))

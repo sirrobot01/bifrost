@@ -20,6 +20,7 @@ type resolvedService struct {
 	Backend           netip.AddrPort `json:"backend"`
 	EdgeAddress       netip.Addr     `json:"edge_address,omitempty"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
+	TerminatesTLS     bool           `json:"terminates_tls"`
 }
 
 type resolution struct {
@@ -115,6 +116,7 @@ func resolve(configFile config.Config) (resolution, error) {
 			Backend:           backend,
 			EdgeAddress:       edgeAddress,
 			ClientIPPreserved: mode == "direct" || service.ProxyProtocol,
+			TerminatesTLS:     mode != "direct" && service.TerminatesTLS(),
 		})
 	}
 	return result, nil

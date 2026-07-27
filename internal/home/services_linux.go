@@ -21,6 +21,7 @@ func servicesFromConfig(configFile config.Config) ([]Service, error) {
 			ProxyProtocol:  configured.ProxyProtocol,
 			Edge:           configured.Edge,
 			MaxConnections: 1024,
+			TLS:            configured.TerminatesTLS(),
 		}
 		if configured.PublicAddress != "" {
 			service.PublicAddress = netip.MustParseAddr(configured.PublicAddress)

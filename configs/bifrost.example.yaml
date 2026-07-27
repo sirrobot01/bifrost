@@ -29,11 +29,21 @@ edge:
   max_clock_skew: 30s
   header_timeout: 250ms
 
+# Automatic certificates for services that terminate TLS. The challenge
+# records use the dns provider credentials above; nothing else is required.
+acme:
+  email: ""
+  state_dir: /var/lib/bifrost
+
 static_services:
   - name: jellyfin
     backend: 127.0.0.1:8096
     listen: 443
     dns: media.example.com
     mode: splice
+    # tls defaults to auto: Bifrost obtains a certificate for the dns name and
+    # terminates TLS on the listener. Set "off" for a backend that speaks TLS
+    # itself, such as Plex.
+    tls: auto
     proxy_protocol: false
     edge: false

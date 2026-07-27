@@ -3,6 +3,7 @@ package exposure
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,11 @@ type Config struct {
 	EdgeHeaderTimeout time.Duration
 	EdgeIdentity      string
 	Logger            *slog.Logger
+	// TLS, when set, terminates TLS on accepted connections and forwards
+	// plaintext to the backend. The edge header stage still sees the raw
+	// stream: the edge reads SNI without decrypting, so its frame precedes
+	// the ClientHello.
+	TLS *tls.Config
 }
 
 // Status is a point-in-time view of splice activity.
@@ -281,6 +287,18 @@ func (s *Splicer) serveConnection(connection *connection) {
 			s.logger.Warn("authenticated edge header rejected", "client", connection.client.RemoteAddr(), "error", err)
 			return
 		}
+	}
+	if s.config.TLS != nil {
+		tlsConnection := tls.Server(client, s.config.TLS)
+		handshakeContext, cancel := context.WithTimeout(context.Background(), s.config.DialTimeout)
+		err := tlsConnection.HandshakeContext(handshakeContext)
+		cancel()
+		if err != nil {
+			s.rejected.Add(1)
+			s.logger.Warn("TLS handshake failed", "client", connection.client.RemoteAddr(), "error", err)
+			return
+		}
+		client = tlsConnection
 	}
 	dialer := net.Dialer{Timeout: s.config.DialTimeout}
 	backend, err := dialer.Dial("tcp", s.config.BackendAddress.String())
