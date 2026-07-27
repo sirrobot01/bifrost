@@ -82,6 +82,7 @@ services:
       bifrost.listen: "443"
       bifrost.dns: media.example.com
       bifrost.mode: splice
+      bifrost.tls: auto
       bifrost.network: media
 ```
 

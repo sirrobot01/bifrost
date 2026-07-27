@@ -266,10 +266,13 @@ services:
       bifrost.listen: "443"
       bifrost.dns: media.example.com
       bifrost.mode: splice
+      bifrost.tls: auto
       bifrost.network: media
       bifrost.proxy_protocol: "false"
       bifrost.edge: "false"
 ```
+
+`bifrost.tls` matches the `tls` field on a static service: `auto` terminates TLS with an automatic certificate, `off` passes raw TCP to a backend that speaks TLS itself. Omitting it means `auto`.
 
 Set `bifrost.network` when the container has more than one Docker network. You can set `bifrost.backend` to an explicit IP address and port. This value overrides Docker address discovery.
 

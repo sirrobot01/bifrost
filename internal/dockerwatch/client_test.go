@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sirrobot01/bifrost/internal/config"
 )
 
 func TestClientListsEnabledContainers(t *testing.T) {
@@ -41,6 +43,38 @@ func TestClientListsEnabledContainers(t *testing.T) {
 	}
 	if len(services) != 1 || services[0].Name != "media" || services[0].Backend != "172.20.0.2:8096" || services[0].Listen != 443 {
 		t.Fatalf("services = %+v", services)
+	}
+}
+
+func TestServiceFromContainerReadsTLSLabel(t *testing.T) {
+	t.Parallel()
+
+	build := func(labels map[string]string) config.StaticService {
+		t.Helper()
+		labels["bifrost.port"] = "8096"
+		labels["bifrost.dns"] = "media.example.com"
+		labels["bifrost.mode"] = "splice"
+		subject := container{ID: "container", Names: []string{"/media"}, Labels: labels}
+		subject.NetworkSettings.Networks = map[string]network{"frontend": {IPAddress: "172.20.0.2"}}
+		service, err := serviceFromContainer(subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+
+	// Default-on matches static services.
+	if service := build(map[string]string{}); !service.TerminatesTLS() {
+		t.Fatalf("tls = %q, want termination by default", service.TLS)
+	}
+	// A containerized backend that speaks TLS itself must be able to opt out.
+	if service := build(map[string]string{"bifrost.tls": "off"}); service.TerminatesTLS() {
+		t.Fatalf("tls = %q, want passthrough", service.TLS)
+	}
+	subject := container{ID: "container", Names: []string{"/media"}, Labels: map[string]string{"bifrost.port": "8096", "bifrost.dns": "media.example.com", "bifrost.tls": "maybe"}}
+	subject.NetworkSettings.Networks = map[string]network{"frontend": {IPAddress: "172.20.0.2"}}
+	if _, err := serviceFromContainer(subject); err == nil {
+		t.Fatal("an unsupported bifrost.tls value was accepted")
 	}
 }
 

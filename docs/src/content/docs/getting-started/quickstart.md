@@ -44,6 +44,8 @@ sudo bifrost doctor
 ✓ INFO    ipv6-egress outbound IPv6 works
                       reached [2606:4700:4700::1111]:443
 ✓ INFO    firewall    no nftables IPv6 input base chain with a drop policy was found
+                      inbound IPv6 reaches this host unfiltered unless a router or another firewall filters it
+                      fix: set firewall.mode to managed so Bifrost scopes inbound IPv6 to the published services
 
 This host can run Bifrost.
 Next: bifrost init --interactive
@@ -94,13 +96,22 @@ Nothing is written until you answer the last question.
 
 The public port is 8096, matching Jellyfin's own port so the URL stays predictable. Bifrost terminates TLS on the listener with an automatically issued certificate for `media.example.com`, so clients connect with `https://` even though Jellyfin itself speaks plain HTTP. A backend that handles TLS itself, such as Plex, sets `tls: off` and passes raw TCP through.
 
-## 4. Permit inbound IPv6 on the router
+## 4. Settle the firewall
 
-Bifrost cannot do this for you, and the published name will not answer until it is done.
+Two firewalls sit in front of a published service, and Bifrost handles only one of them.
 
-Add an inbound rule permitting TCP 8096 to the address Bifrost publishes. Routers differ; the rule is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host.
+**The host.** Add `firewall.mode: managed` to `/etc/bifrost/config.yaml` and Bifrost scopes inbound IPv6 to the services it publishes, opening each port on that service's address alone. Keep your own access reachable at the same time:
 
-Also permit ICMPv6 types 1 to 4. Blocking them breaks path MTU discovery, which produces connections that open and then stall. See [firewall](../../networking/firewall/).
+```yaml
+firewall:
+  mode: managed
+  allow_ports:
+    - 22
+```
+
+This matters even when a router already blocks inbound traffic, and it matters most when the router does not: some routers permit all inbound IPv6, which leaves every listening port on the host reachable from the internet until something on the host filters it. See [firewall](../../networking/firewall/).
+
+**The router.** Bifrost cannot configure this one, and on a router that blocks inbound IPv6 the published name will not answer until you do. Add an inbound rule permitting TCP 8096 to the address Bifrost publishes; the setting is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host. Also permit ICMPv6 types 1 to 4, since blocking them breaks path MTU discovery and produces connections that open and then stall.
 
 ## 5. Review the plan, then start
 

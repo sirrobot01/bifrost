@@ -242,7 +242,13 @@ func serviceFromContainer(container container) (config.StaticService, error) {
 	if err != nil {
 		return config.StaticService{}, err
 	}
-	service := config.StaticService{Name: name, Backend: backend, Listen: listenPort, DNSName: labels["bifrost.dns"], Mode: mode, PublicAddress: publicAddress, ProxyProtocol: proxyProtocol, Edge: edge}
+	// Splice services terminate TLS by default, so a containerized backend
+	// that speaks TLS itself needs a way to opt out.
+	tls := labels["bifrost.tls"]
+	if tls == "" {
+		tls = "auto"
+	}
+	service := config.StaticService{Name: name, Backend: backend, Listen: listenPort, DNSName: labels["bifrost.dns"], Mode: mode, PublicAddress: publicAddress, ProxyProtocol: proxyProtocol, Edge: edge, TLS: tls}
 	if err := service.Validate(); err != nil {
 		return config.StaticService{}, err
 	}
