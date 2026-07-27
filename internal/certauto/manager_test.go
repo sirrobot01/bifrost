@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -88,6 +90,41 @@ func TestManagerIssuesCachesAndRenews(t *testing.T) {
 	}
 	if served.Leaf.NotAfter.Equal(first.Leaf.NotAfter) {
 		t.Fatal("TLS callback still serves the pre-renewal certificate")
+	}
+}
+
+func TestManagerSharesOneIssuancePerName(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var issued atomic.Int32
+	manager, err := NewManager(Config{
+		StateDir: t.TempDir(),
+		Now:      func() time.Time { return now },
+		issue: func(_ context.Context, name string) ([]byte, []byte, error) {
+			issued.Add(1)
+			time.Sleep(50 * time.Millisecond) // widen the race window
+			certificatePEM, keyPEM := selfSigned(t, name, now.Add(90*24*time.Hour))
+			return certificatePEM, keyPEM, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wait sync.WaitGroup
+	for range 5 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if _, err := manager.Certificate(context.Background(), "media.example.com"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wait.Wait()
+	if issued.Load() != 1 {
+		t.Fatalf("issued = %d, want 1 (concurrent callers must share one issuance)", issued.Load())
 	}
 }
 

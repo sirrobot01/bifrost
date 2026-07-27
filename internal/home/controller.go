@@ -186,6 +186,12 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	type plan struct {
+		service Service
+		mode    Mode
+		address netip.Addr
+	}
+	var plans []plan
 	for _, id := range ids {
 		service := indexed[id]
 		current := c.services[id]
@@ -220,30 +226,63 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 			actions = append(actions, Action{Service: id, Kind: "publish", Detail: fmt.Sprintf("AAAA %s -> %s", service.DNSName, address)})
 			continue
 		}
+		plans = append(plans, plan{service: service, mode: mode, address: address})
+	}
 
+	// Warm certificates concurrently before any service is prepared: one slow
+	// first issuance must not delay the other services' publication, and one
+	// failing issuance must not keep the other services withdrawn.
+	certificateErrors := make([]error, len(plans))
+	var certificateWait sync.WaitGroup
+	for index, planned := range plans {
+		if planned.mode != ModeSplice || !planned.service.TLS || c.config.Certificates == nil {
+			continue
+		}
+		certificateWait.Add(1)
+		go func() {
+			defer certificateWait.Done()
+			_, err := c.config.Certificates.Certificate(ctx, planned.service.DNSName)
+			certificateErrors[index] = err
+		}()
+	}
+	certificateWait.Wait()
+
+	var reconcileErrors []error
+	for index, planned := range plans {
+		id := planned.service.ID
+		if err := certificateErrors[index]; err != nil {
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("prepare service %q: obtain certificate for %s: %w", id, planned.service.DNSName, err))
+			continue
+		}
+		current := c.services[id]
 		if current == nil {
-			current = &serviceState{spec: service, mode: mode}
+			current = &serviceState{spec: planned.service, mode: planned.mode}
 			c.services[id] = current
 		}
-		newEndpoint, err := c.prepareEndpoint(ctx, service, mode, address, selection.Prefix)
+		newEndpoint, err := c.prepareEndpoint(ctx, planned.service, planned.mode, planned.address, selection.Prefix)
 		if err != nil {
-			return actions, fmt.Errorf("prepare service %q: %w", id, err)
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("prepare service %q: %w", id, err))
+			continue
 		}
 		addresses := append(current.addresses(), newEndpoint.address)
 		addresses = uniqueAddresses(addresses)
-		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: addresses, EdgeAddresses: edgeAddresses(service), TTL: c.config.TTL}); err != nil {
+		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: planned.service.DNSName, Addresses: addresses, EdgeAddresses: edgeAddresses(planned.service), TTL: c.config.TTL}); err != nil {
 			_ = c.teardownEndpoint(context.WithoutCancel(ctx), newEndpoint)
-			return actions, fmt.Errorf("publish service %q: %w", id, err)
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("publish service %q: %w", id, err))
+			continue
 		}
 		for _, existing := range current.endpoints {
-			if existing.address != address && existing.retireAt.IsZero() {
+			if existing.address != planned.address && existing.retireAt.IsZero() {
 				existing.retireAt = c.config.Now().Add(c.config.DrainGrace)
 			}
 		}
-		current.spec = service
-		current.mode = mode
+		current.spec = planned.service
+		current.mode = planned.mode
 		current.endpoints = append(current.endpoints, newEndpoint)
-		actions = append(actions, Action{Service: id, Kind: "publish", Detail: fmt.Sprintf("AAAA %s -> %v", service.DNSName, addresses)})
+		actions = append(actions, Action{Service: id, Kind: "publish", Detail: fmt.Sprintf("AAAA %s -> %v", planned.service.DNSName, addresses)})
+	}
+	if len(reconcileErrors) > 0 {
+		return actions, errors.Join(reconcileErrors...)
 	}
 	return actions, nil
 }

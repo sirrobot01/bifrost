@@ -50,10 +50,16 @@ type Config struct {
 
 type issueFunc func(ctx context.Context, name string) (certificatePEM, keyPEM []byte, err error)
 
+// Manager guards its certificate cache with a short-lived read-write lock and
+// serializes issuance per name. Issuance for different names runs
+// concurrently, and the serving callback never waits behind an issuance:
+// during a renewal the previous certificate keeps being served.
 type Manager struct {
-	config Config
-	mu     sync.RWMutex
-	certs  map[string]*tls.Certificate
+	config    Config
+	mu        sync.RWMutex
+	certs     map[string]*tls.Certificate
+	inflight  map[string]*sync.Mutex
+	accountMu sync.Mutex
 }
 
 func NewManager(config Config) (*Manager, error) {
@@ -75,7 +81,7 @@ func NewManager(config Config) (*Manager, error) {
 	if err := os.MkdirAll(config.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create certificate state directory: %w", err)
 	}
-	manager := &Manager{config: config, certs: make(map[string]*tls.Certificate)}
+	manager := &Manager{config: config, certs: make(map[string]*tls.Certificate), inflight: make(map[string]*sync.Mutex)}
 	if manager.config.issue == nil {
 		manager.config.issue = manager.acmeIssue
 	}
@@ -85,41 +91,56 @@ func NewManager(config Config) (*Manager, error) {
 // Certificate returns a certificate for name, issuing one when neither the
 // cache nor the state directory holds a usable one. It blocks for the
 // issuance, so it belongs in the reconcile path, not the accept path.
+// Concurrent calls for the same name share one issuance; different names
+// issue independently.
 func (m *Manager) Certificate(ctx context.Context, name string) (*tls.Certificate, error) {
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if certificate, ok := m.certs[name]; ok && !m.needsRenewal(certificate) {
+	if certificate, ok := m.cached(name); ok && !m.needsRenewal(certificate) {
+		return certificate, nil
+	}
+	lock := m.nameLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+	// A concurrent caller may have finished the work while this one waited.
+	if certificate, ok := m.cached(name); ok && !m.needsRenewal(certificate) {
 		return certificate, nil
 	}
 	if certificate, err := m.load(name); err == nil && !m.needsRenewal(certificate) {
-		m.certs[name] = certificate
+		m.remember(name, certificate)
 		return certificate, nil
 	}
-	certificate, err := m.issueAndStore(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return certificate, nil
+	return m.issueAndStore(ctx, name)
 }
 
 // RenewDue reissues every known certificate inside the renewal window and
-// reports the names renewed. Failures are returned joined; the caller retries
-// on its own schedule.
+// reports the names renewed. The cache lock is never held across an issuance,
+// so handshakes keep serving the old certificate while its replacement is
+// obtained.
 func (m *Manager) RenewDue(ctx context.Context) ([]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	names := make([]string, 0, len(m.certs))
+	for name := range m.certs {
+		names = append(names, name)
+	}
+	m.mu.RUnlock()
+
 	var renewed []string
 	var renewErrors []error
-	for name, certificate := range m.certs {
-		if !m.needsRenewal(certificate) {
+	for _, name := range names {
+		certificate, ok := m.cached(name)
+		if !ok || !m.needsRenewal(certificate) {
 			continue
 		}
-		if _, err := m.issueAndStore(ctx, name); err != nil {
-			renewErrors = append(renewErrors, fmt.Errorf("renew %s: %w", name, err))
-			continue
+		lock := m.nameLock(name)
+		lock.Lock()
+		if certificate, ok := m.cached(name); ok && m.needsRenewal(certificate) {
+			if _, err := m.issueAndStore(ctx, name); err != nil {
+				renewErrors = append(renewErrors, fmt.Errorf("renew %s: %w", name, err))
+			} else {
+				renewed = append(renewed, name)
+			}
 		}
-		renewed = append(renewed, name)
+		lock.Unlock()
 	}
 	return renewed, errors.Join(renewErrors...)
 }
@@ -132,15 +153,37 @@ func (m *Manager) TLSConfig(name string) *tls.Config {
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"http/1.1"},
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			m.mu.RLock()
-			defer m.mu.RUnlock()
-			certificate, ok := m.certs[name]
+			certificate, ok := m.cached(name)
 			if !ok {
 				return nil, fmt.Errorf("no certificate for %s", name)
 			}
 			return certificate, nil
 		},
 	}
+}
+
+func (m *Manager) cached(name string) (*tls.Certificate, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	certificate, ok := m.certs[name]
+	return certificate, ok
+}
+
+func (m *Manager) remember(name string, certificate *tls.Certificate) {
+	m.mu.Lock()
+	m.certs[name] = certificate
+	m.mu.Unlock()
+}
+
+func (m *Manager) nameLock(name string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lock, ok := m.inflight[name]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.inflight[name] = lock
+	}
+	return lock
 }
 
 func (m *Manager) needsRenewal(certificate *tls.Certificate) bool {
@@ -165,7 +208,7 @@ func (m *Manager) issueAndStore(ctx context.Context, name string) (*tls.Certific
 	if err != nil {
 		return nil, err
 	}
-	m.certs[name] = certificate
+	m.remember(name, certificate)
 	m.config.Logger.Info("issued certificate", "name", name, "not_after", certificate.Leaf.NotAfter.Format(time.RFC3339))
 	return certificate, nil
 }
@@ -211,8 +254,11 @@ func writeSecret(path string, content []byte, mode os.FileMode) error {
 	return os.Rename(temporary, path)
 }
 
-// accountKey loads or creates the ACME account key.
+// accountKey loads or creates the ACME account key. Serialized so that
+// concurrent first issuances for different names share one account.
 func (m *Manager) accountKey() (*ecdsa.PrivateKey, error) {
+	m.accountMu.Lock()
+	defer m.accountMu.Unlock()
 	path := filepath.Join(m.config.StateDir, "acme-account.key")
 	if encoded, err := os.ReadFile(path); err == nil {
 		block, _ := pem.Decode(encoded)

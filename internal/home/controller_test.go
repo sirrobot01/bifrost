@@ -2,9 +2,12 @@ package home
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/netip"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,6 +235,55 @@ func TestControllerDryRunDoesNotMutate(t *testing.T) {
 
 func spliceService() Service {
 	return Service{ID: "media", DNSName: "media.example.com", Mode: ModeSplice, ListenPort: 443, Backend: netip.MustParseAddrPort("192.0.2.10:8096"), MaxConnections: 10}
+}
+
+type fakeCertificates struct {
+	failing map[string]error
+	issued  []string
+	mu      sync.Mutex
+}
+
+func (f *fakeCertificates) Certificate(_ context.Context, name string) (*tls.Certificate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, exists := f.failing[name]; exists {
+		return nil, err
+	}
+	f.issued = append(f.issued, name)
+	return &tls.Certificate{}, nil
+}
+
+func (f *fakeCertificates) TLSConfig(string) *tls.Config { return &tls.Config{} }
+
+func TestControllerIsolatesCertificateFailures(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	certificates := &fakeCertificates{failing: map[string]error{"broken.example.com": errors.New("CA said no")}}
+	fixture.controller.config.Certificates = certificates
+
+	healthy := spliceService()
+	healthy.TLS = true
+	broken := Service{ID: "broken", DNSName: "broken.example.com", Mode: ModeSplice, ListenPort: 443, Backend: netip.MustParseAddrPort("192.0.2.11:8096"), MaxConnections: 10, TLS: true}
+
+	actions, err := fixture.controller.Reconcile(t.Context(), []Service{healthy, broken}, snapshot("2001:db8:1::10/64"), false)
+	if err == nil || !strings.Contains(err.Error(), `service "broken"`) {
+		t.Fatalf("err = %v, want the broken service named", err)
+	}
+	// The healthy service must be fully published despite the neighbor's
+	// certificate failure.
+	published := false
+	for _, action := range actions {
+		if action.Service == "media" && action.Kind == "publish" {
+			published = true
+		}
+	}
+	if !published {
+		t.Fatalf("healthy service was not published; actions = %v", actions)
+	}
+	if len(fixture.publisher.publications) != 1 || fixture.publisher.publications[0].Name != "media.example.com" {
+		t.Fatalf("publications = %+v", fixture.publisher.publications)
+	}
 }
 
 func snapshot(address string) netwatch.Snapshot {
