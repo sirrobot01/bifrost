@@ -103,6 +103,8 @@ Replace the example prefix with a real prefix on the configured interface.
 
 Bifrost supports Cloudflare, deSEC, dynv6, and RFC 2136.
 
+If you are unsure which to use: with a domain already on Cloudflare, use Cloudflare. With no domain at all, deSEC and dynv6 both give you a free name (`yourname.dedyn.io`, `yourname.dynv6.net`); deSEC enforces a 3600-second minimum TTL on new domains, dynv6 does not. With your own authoritative server such as BIND, Knot, or PowerDNS, use RFC 2136. Any provider not listed here can still work if it serves your zone from an RFC 2136 server, and `init --interactive` discovers the correct zone from your account for everything except RFC 2136.
+
 The DNS TTL must be from 60 seconds through 24 hours. The value must use whole seconds.
 
 ### Cloudflare
