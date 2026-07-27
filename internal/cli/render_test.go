@@ -85,6 +85,45 @@ func TestWriteFindingColored(t *testing.T) {
 	}
 }
 
+func TestWriteServiceReportGroupsFindings(t *testing.T) {
+	var output bytes.Buffer
+	report := diagnose.Report{Findings: []diagnose.Finding{
+		{Check: "mtu", Severity: diagnose.SeverityInfo, Summary: "interface MTU is suitable for IPv6", Detail: "MTU 1500"},
+		{Check: "client-ip", Severity: diagnose.SeverityWarning, Service: "plex", Summary: "splice mode hides the client address from the backend", Remediation: "prefer direct mode"},
+		{Check: "address", Severity: diagnose.SeverityInfo, Service: "plex", Summary: "service address is present on the host"},
+		{Check: "dns", Severity: diagnose.SeverityInfo, Service: "plex", Summary: "DNS contains the expected IPv6 address"},
+		{Check: "client-ip", Severity: diagnose.SeverityWarning, Service: "emby", Summary: "splice mode hides the client address from the backend", Remediation: "prefer direct mode"},
+		{Check: "address", Severity: diagnose.SeverityError, Service: "emby", Summary: "service address is missing from the host"},
+		{Check: "firewall", Severity: diagnose.SeverityInfo, Summary: "no nftables IPv6 input base chain with a drop policy was found"},
+	}}
+	if err := writeFindings(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	t.Logf("rendered:\n%s", text)
+
+	if !strings.Contains(text, "plex  ok: address dns  warn: client-ip") {
+		t.Fatalf("missing plex summary line:\n%s", text)
+	}
+	if !strings.Contains(text, "emby  warn: client-ip  FAIL: address") {
+		t.Fatalf("missing emby summary line:\n%s", text)
+	}
+	if !strings.Contains(text, "emby: service address is missing from the host") {
+		t.Fatalf("missing error detail:\n%s", text)
+	}
+	// The identical warning must appear once, naming both services.
+	if got := strings.Count(text, "splice mode hides the client address"); got != 1 {
+		t.Fatalf("warning appears %d times, want 1:\n%s", got, text)
+	}
+	if !strings.Contains(text, "services: emby, plex") && !strings.Contains(text, "services: plex, emby") {
+		t.Fatalf("grouped warning lacks the service list:\n%s", text)
+	}
+	// Passing INFO details stay out of the flat list.
+	if strings.Contains(text, "INFO    address") {
+		t.Fatalf("per-service INFO rendered as a full block:\n%s", text)
+	}
+}
+
 func TestWriteCheckSummary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -98,7 +137,7 @@ func TestWriteCheckSummary(t *testing.T) {
 		},
 		{
 			name:     "warnings only",
-			findings: []diagnose.Finding{{Severity: diagnose.SeverityWarning}, {Severity: diagnose.SeverityWarning}},
+			findings: []diagnose.Finding{{Check: "mtu", Severity: diagnose.SeverityWarning}, {Check: "privileges", Severity: diagnose.SeverityWarning}},
 			want:     "All checks passed, with 2 warnings to review.",
 		},
 		{

@@ -100,7 +100,7 @@ func (c *Checker) Check(ctx context.Context, input Input) (Report, error) {
 func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 	resolved, err := c.resolver.LookupNetIP(ctx, "ip6", service.DNSName)
 	if err == nil && slices.Contains(resolved, service.Address) {
-		return Finding{Check: "dns", Severity: SeverityInfo, Summary: service.Name + ": DNS contains the expected IPv6 address"}
+		return Finding{Check: "dns", Severity: SeverityInfo, Service: service.Name, Summary: "DNS contains the expected IPv6 address"}
 	}
 	local := fmt.Sprintf("local resolver answered %v", resolved)
 	if err != nil {
@@ -112,7 +112,8 @@ func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 		return Finding{
 			Check:       "dns",
 			Severity:    SeverityWarning,
-			Summary:     service.Name + ": the authoritative nameserver has the address, the local resolver does not",
+			Service:     service.Name,
+			Summary:     "the authoritative nameserver has the address, the local resolver does not",
 			Detail:      source + " answers with the expected address; " + local,
 			Remediation: "wait for the local resolver's cached answer to expire, or flush its cache",
 		}
@@ -120,7 +121,8 @@ func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 		return Finding{
 			Check:       "dns",
 			Severity:    SeverityError,
-			Summary:     service.Name + ": the authoritative nameserver does not serve the expected address",
+			Service:     service.Name,
+			Summary:     "the authoritative nameserver does not serve the expected address",
 			Detail:      fmt.Sprintf("%s answered %v, expected %s", source, authoritative, service.Address),
 			Remediation: "if dns-owner reports correct provider state, confirm the DNS account is activated and the zone is delegated",
 		}
@@ -128,7 +130,8 @@ func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 		return Finding{
 			Check:       "dns",
 			Severity:    SeverityError,
-			Summary:     service.Name + ": DNS lookup failed",
+			Service:     service.Name,
+			Summary:     "DNS lookup failed",
 			Detail:      local + "; authoritative check failed: " + authErr.Error(),
 			Remediation: "confirm the DNS name and provider state, then re-run check",
 		}
@@ -142,7 +145,7 @@ func (c *Checker) dnsFinding(ctx context.Context, service Service) Finding {
 func (c *Checker) tlsFinding(ctx context.Context, service Service) Finding {
 	connection, err := c.dial(ctx, "tcp6", netip.AddrPortFrom(service.Address, service.Port).String())
 	if err != nil {
-		return Finding{Check: "tls", Severity: SeverityError, Summary: service.Name + ": TLS listener is unreachable", Detail: err.Error()}
+		return Finding{Check: "tls", Severity: SeverityError, Service: service.Name, Summary: "TLS listener is unreachable", Detail: err.Error()}
 	}
 	defer func() { _ = connection.Close() }()
 	client := tls.Client(connection, &tls.Config{ServerName: service.DNSName})
@@ -150,7 +153,8 @@ func (c *Checker) tlsFinding(ctx context.Context, service Service) Finding {
 		return Finding{
 			Check:       "tls",
 			Severity:    SeverityError,
-			Summary:     service.Name + ": TLS handshake failed",
+			Service:     service.Name,
+			Summary:     "TLS handshake failed",
 			Detail:      err.Error(),
 			Remediation: "confirm certificate issuance succeeded in the serve log, then re-run check",
 		}
@@ -159,33 +163,33 @@ func (c *Checker) tlsFinding(ctx context.Context, service Service) Finding {
 	remaining := leaf.NotAfter.Sub(c.now())
 	days := int(remaining.Hours() / 24)
 	if remaining <= 0 {
-		return Finding{Check: "tls", Severity: SeverityError, Summary: service.Name + ": certificate has expired", Detail: "expired " + leaf.NotAfter.Format(time.RFC3339), Remediation: "check certificate renewal errors in the serve log"}
+		return Finding{Check: "tls", Severity: SeverityError, Service: service.Name, Summary: "certificate has expired", Detail: "expired " + leaf.NotAfter.Format(time.RFC3339), Remediation: "check certificate renewal errors in the serve log"}
 	}
 	if remaining < 14*24*time.Hour {
-		return Finding{Check: "tls", Severity: SeverityWarning, Summary: fmt.Sprintf("%s: certificate expires in %d days", service.Name, days), Remediation: "renewal runs 30 days before expiry; check renewal errors in the serve log"}
+		return Finding{Check: "tls", Severity: SeverityWarning, Service: service.Name, Summary: fmt.Sprintf("certificate expires in %d days", days), Remediation: "renewal runs 30 days before expiry; check renewal errors in the serve log"}
 	}
-	return Finding{Check: "tls", Severity: SeverityInfo, Summary: service.Name + ": certificate is valid", Detail: fmt.Sprintf("expires in %d days", days)}
+	return Finding{Check: "tls", Severity: SeverityInfo, Service: service.Name, Summary: "certificate is valid", Detail: fmt.Sprintf("expires in %d days", days)}
 }
 
 func (c *Checker) serviceFindings(ctx context.Context, service Service, local map[netip.Addr]struct{}, interfaceMTU int, prober ExternalProber) []Finding {
 	findings := make([]Finding, 0, 5)
 	if service.ClientIPPreserved {
-		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityInfo, Summary: service.Name + ": backend client identity is preserved"})
+		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityInfo, Service: service.Name, Summary: "backend client identity is preserved"})
 	} else {
-		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityWarning, Summary: service.Name + ": splice mode hides the client address from the backend", Remediation: "prefer direct mode or enable PROXY v2 only when the backend explicitly supports it"})
+		findings = append(findings, Finding{Check: "client-ip", Severity: SeverityWarning, Service: service.Name, Summary: "splice mode hides the client address from the backend", Remediation: "prefer direct mode or enable PROXY v2 only when the backend explicitly supports it"})
 	}
 	if service.CheckLocal {
 		if _, exists := local[service.Address]; exists {
-			findings = append(findings, Finding{Check: "address", Severity: SeverityInfo, Summary: service.Name + ": service address is present on the host"})
+			findings = append(findings, Finding{Check: "address", Severity: SeverityInfo, Service: service.Name, Summary: "service address is present on the host"})
 			connection, err := c.dial(ctx, "tcp6", netip.AddrPortFrom(service.Address, service.Port).String())
 			if err != nil {
-				findings = append(findings, Finding{Check: "listener", Severity: SeverityError, Summary: service.Name + ": local TCP listener is unavailable", Detail: err.Error()})
+				findings = append(findings, Finding{Check: "listener", Severity: SeverityError, Service: service.Name, Summary: "local TCP listener is unavailable", Detail: err.Error()})
 			} else {
 				_ = connection.Close()
-				findings = append(findings, Finding{Check: "listener", Severity: SeverityInfo, Summary: service.Name + ": local TCP listener accepted a connection"})
+				findings = append(findings, Finding{Check: "listener", Severity: SeverityInfo, Service: service.Name, Summary: "local TCP listener accepted a connection"})
 			}
 		} else {
-			findings = append(findings, Finding{Check: "address", Severity: SeverityError, Summary: service.Name + ": service address is missing from the host"})
+			findings = append(findings, Finding{Check: "address", Severity: SeverityError, Service: service.Name, Summary: "service address is missing from the host"})
 		}
 	}
 
@@ -196,23 +200,23 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 	findings = append(findings, c.dnsFinding(ctx, service))
 
 	if prober == nil {
-		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Summary: service.Name + ": external reachability and PMTU were not tested", Remediation: "configure an explicit external probe endpoint to distinguish router filtering from host state"})
+		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external reachability and PMTU were not tested", Remediation: "configure an explicit external probe endpoint to distinguish router filtering from host state"})
 		return findings
 	}
 	result, err := prober.Probe(ctx, ProbeRequest{Address: service.Address, Port: service.Port})
 	if err != nil {
-		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Summary: service.Name + ": external probe failed", Detail: err.Error()})
+		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external probe failed", Detail: err.Error()})
 		return findings
 	}
 	if !result.Reachable {
-		findings = append(findings, Finding{Check: "external", Severity: SeverityError, Summary: service.Name + ": service is not reachable from the external probe", Remediation: "if local address, listener, and host policy are correct, inspect the customer-edge router IPv6 firewall"})
+		findings = append(findings, Finding{Check: "external", Severity: SeverityError, Service: service.Name, Summary: "service is not reachable from the external probe", Remediation: "if local address, listener, and host policy are correct, inspect the customer-edge router IPv6 firewall"})
 		return findings
 	}
-	findings = append(findings, Finding{Check: "external", Severity: SeverityInfo, Summary: service.Name + ": service is externally reachable"})
+	findings = append(findings, Finding{Check: "external", Severity: SeverityInfo, Service: service.Name, Summary: "service is externally reachable"})
 	if !result.PacketTooBigWorks {
-		findings = append(findings, Finding{Check: "pmtu", Severity: SeverityError, Summary: service.Name + ": the probe detected a likely PMTU blackhole", Detail: fmt.Sprintf("interface MTU %d, observed path MTU %d", interfaceMTU, result.PathMTU), Remediation: "allow ICMPv6 Packet Too Big end-to-end and verify reduced-MTU links such as PPPoE"})
+		findings = append(findings, Finding{Check: "pmtu", Severity: SeverityError, Service: service.Name, Summary: "the probe detected a likely PMTU blackhole", Detail: fmt.Sprintf("interface MTU %d, observed path MTU %d", interfaceMTU, result.PathMTU), Remediation: "allow ICMPv6 Packet Too Big end-to-end and verify reduced-MTU links such as PPPoE"})
 	} else {
-		findings = append(findings, Finding{Check: "pmtu", Severity: SeverityInfo, Summary: service.Name + ": Packet Too Big delivery succeeded", Detail: fmt.Sprintf("interface MTU %d, observed path MTU %d", interfaceMTU, result.PathMTU)})
+		findings = append(findings, Finding{Check: "pmtu", Severity: SeverityInfo, Service: service.Name, Summary: "Packet Too Big delivery succeeded", Detail: fmt.Sprintf("interface MTU %d, observed path MTU %d", interfaceMTU, result.PathMTU)})
 	}
 	return findings
 }

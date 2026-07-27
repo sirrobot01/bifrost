@@ -59,7 +59,7 @@ func TestDoctorSummaryCountsSeverities(t *testing.T) {
 		},
 		{
 			name:     "warnings only",
-			findings: []diagnose.Finding{{Severity: diagnose.SeverityWarning}, {Severity: diagnose.SeverityWarning}},
+			findings: []diagnose.Finding{{Check: "mtu", Severity: diagnose.SeverityWarning}, {Check: "privileges", Severity: diagnose.SeverityWarning}},
 			want:     "with 2 warnings to review",
 		},
 		{

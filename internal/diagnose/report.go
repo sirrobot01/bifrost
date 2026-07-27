@@ -11,7 +11,9 @@ const (
 )
 
 type Finding struct {
-	Check       string   `json:"check"`
+	Check string `json:"check"`
+	// Service names the service a finding belongs to; empty for host findings.
+	Service     string   `json:"service,omitempty"`
 	Severity    Severity `json:"severity"`
 	Summary     string   `json:"summary"`
 	Detail      string   `json:"detail,omitempty"`

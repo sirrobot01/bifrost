@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
@@ -93,6 +94,37 @@ type Controller struct {
 	config   ControllerConfig
 	mu       sync.RWMutex
 	services map[string]*serviceState
+	// status is a lock-free snapshot for observability. Reconcile can hold mu
+	// for minutes (certificate issuance, provider calls); status readers must
+	// never wait behind it.
+	status atomic.Pointer[[]statusEntry]
+}
+
+// statusEntry is an immutable copy of one service's shape. Live counters come
+// from the splicers' atomics at read time.
+type statusEntry struct {
+	spec      Service
+	mode      Mode
+	endpoints []statusEndpoint
+}
+
+type statusEndpoint struct {
+	address netip.Addr
+	splicer Splicer
+}
+
+// refreshStatus must run with mu held. It publishes an immutable snapshot for
+// Status readers.
+func (c *Controller) refreshStatus() {
+	entries := make([]statusEntry, 0, len(c.services))
+	for _, state := range c.services {
+		entry := statusEntry{spec: state.spec, mode: state.mode, endpoints: make([]statusEndpoint, 0, len(state.endpoints))}
+		for _, endpoint := range state.endpoints {
+			entry.endpoints = append(entry.endpoints, statusEndpoint{address: endpoint.address, splicer: endpoint.splicer})
+		}
+		entries = append(entries, entry)
+	}
+	c.status.Store(&entries)
 }
 
 type serviceState struct {
@@ -131,12 +163,15 @@ func NewController(config ControllerConfig) (*Controller, error) {
 			return connection.Close()
 		}
 	}
-	return &Controller{config: config, services: make(map[string]*serviceState)}, nil
+	controller := &Controller{config: config, services: make(map[string]*serviceState)}
+	controller.refreshStatus()
+	return controller, nil
 }
 
 func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot netwatch.Snapshot, dryRun bool) ([]Action, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.refreshStatus()
 
 	indexed := make(map[string]Service, len(desired))
 	desiredDNSNames := make([]string, 0, len(desired))
@@ -287,14 +322,18 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	return actions, nil
 }
 
+// Status reads the lock-free snapshot, so it answers instantly even while a
+// reconcile holds the controller lock through slow network work.
 func (c *Controller) Status() []ServiceStatus {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	statuses := make([]ServiceStatus, 0, len(c.services))
-	for _, state := range c.services {
-		status := ServiceStatus{ID: state.spec.ID, DNSName: state.spec.DNSName, Mode: state.mode, Backend: state.spec.Backend, ClientIPPreserved: state.mode == ModeDirect}
-		status.EdgeAddresses = edgeAddresses(state.spec)
-		for _, endpoint := range state.endpoints {
+	snapshot := c.status.Load()
+	if snapshot == nil {
+		return nil
+	}
+	statuses := make([]ServiceStatus, 0, len(*snapshot))
+	for _, entry := range *snapshot {
+		status := ServiceStatus{ID: entry.spec.ID, DNSName: entry.spec.DNSName, Mode: entry.mode, Backend: entry.spec.Backend, ClientIPPreserved: entry.mode == ModeDirect}
+		status.EdgeAddresses = edgeAddresses(entry.spec)
+		for _, endpoint := range entry.endpoints {
 			status.Addresses = append(status.Addresses, endpoint.address)
 			if endpoint.splicer != nil {
 				spliceStatus := endpoint.splicer.Status()
@@ -314,6 +353,7 @@ func (c *Controller) Status() []ServiceStatus {
 func (c *Controller) Sweep(ctx context.Context) ([]Action, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.refreshStatus()
 	actions := c.expiredActions()
 	if err := c.retireExpired(ctx); err != nil {
 		return actions, err
@@ -329,6 +369,7 @@ func (c *Controller) Sweep(ctx context.Context) ([]Action, error) {
 func (c *Controller) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.refreshStatus()
 	var shutdownErrors []error
 	for id, state := range c.services {
 		if err := c.config.Publisher.Withdraw(ctx, state.spec.DNSName); err != nil {

@@ -189,9 +189,9 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 			}
 			err := reconciler.Verify(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: []netip.Addr{service.Address}, EdgeAddresses: edgeAddresses, TTL: configFile.DNS.TTL.Duration()})
 			if err != nil {
-				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityError, Summary: service.Name + ": provider DNS state or ownership is incorrect", Detail: err.Error(), Remediation: "run bifrost serve --dry-run, then reconcile only after reviewing the planned DNS changes"})
+				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityError, Service: service.Name, Summary: "provider DNS state or ownership is incorrect", Detail: err.Error(), Remediation: "run bifrost serve --dry-run, then reconcile only after reviewing the planned DNS changes"})
 			} else {
-				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityInfo, Summary: service.Name + ": provider DNS state is owned and matches the configuration"})
+				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityInfo, Service: service.Name, Summary: "provider DNS state is owned and matches the configuration"})
 			}
 		}
 	}
