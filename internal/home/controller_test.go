@@ -321,6 +321,45 @@ func TestControllerOpensFirewallBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestControllerOpensFirewallForDirectServices(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	firewall := &fakeFirewall{events: &fixture.events}
+	fixture.controller.config.Firewall = firewall
+	address := netip.MustParseAddr("2001:db8:1::10")
+	// Direct mode runs no Bifrost listener, but the backend owns the address
+	// and still needs its port opened, or managed mode black-holes it.
+	service := Service{ID: "media", DNSName: "media.example.com", Mode: ModeDirect, PublicAddress: address, ListenPort: 443, Backend: netip.AddrPortFrom(address, 443), MaxConnections: 1}
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{service}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("applied %d specs", len(firewall.applied))
+	}
+	endpoints := firewall.applied[0].Endpoints
+	if len(endpoints) != 1 || endpoints[0].Address != address || endpoints[0].Port != 443 {
+		t.Fatalf("direct service missing from the firewall policy: %+v", endpoints)
+	}
+}
+
+func TestAutoModeRejectsDirectWhenPortsDiffer(t *testing.T) {
+	t.Parallel()
+
+	// A backend on 0.0.0.0:32400 published on 443 can only work through a
+	// splice. Selecting direct would resolve the name to an address whose
+	// port nothing serves, and a probe can be fooled by a previous run's own
+	// listener, so the port mismatch must rule direct out first.
+	service := Service{ID: "plex", DNSName: "plex.example.com", Mode: ModeAuto, ListenPort: 443, Backend: netip.MustParseAddrPort("0.0.0.0:32400"), MaxConnections: 1}
+	_, err := directAddress(service, snapshot("2001:db8:1::10/64"), serviceaddr.Selection{Prefix: netip.MustParsePrefix("2001:db8:1::/64")}, nil, time.Now())
+	if err == nil {
+		t.Fatal("direct mode was selected for a backend whose port differs from the public port")
+	}
+	if !strings.Contains(err.Error(), "backend port") {
+		t.Fatalf("err = %v, want the port mismatch named", err)
+	}
+}
+
 func TestControllerPublishesDespiteFirewallFailure(t *testing.T) {
 	t.Parallel()
 

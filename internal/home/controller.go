@@ -126,9 +126,8 @@ func (c *Controller) applyFirewall(ctx context.Context, pending []hostfw.Endpoin
 	}
 	for _, state := range c.services {
 		for _, endpoint := range state.endpoints {
-			if endpoint.splicer == nil {
-				continue
-			}
+			// Direct-mode endpoints have no splicer, but the backend listens
+			// on that address itself and still needs the port opened.
 			spec.Endpoints = append(spec.Endpoints, hostfw.Endpoint{Service: state.spec.ID, Address: endpoint.address, Port: state.spec.ListenPort})
 		}
 	}
@@ -313,9 +312,7 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 		if c.config.Firewall != nil {
 			preview := hostfw.Spec{TrustedInterfaces: c.config.FirewallAllowances.TrustedInterfaces, AllowPorts: c.config.FirewallAllowances.AllowPorts}
 			for _, planned := range plans {
-				if planned.mode == ModeSplice {
-					preview.Endpoints = append(preview.Endpoints, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
-				}
+				preview.Endpoints = append(preview.Endpoints, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
 			}
 			actions = append(actions, Action{Kind: "firewall", Detail: "drop inbound IPv6 except: " + preview.Describe()})
 		}
@@ -346,9 +343,7 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	// already permit them, and check reports the mismatch either way.
 	pending := make([]hostfw.Endpoint, 0, len(plans))
 	for _, planned := range plans {
-		if planned.mode == ModeSplice {
-			pending = append(pending, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
-		}
+		pending = append(pending, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
 	}
 	if err := c.applyFirewall(ctx, pending); err != nil {
 		reconcileErrors = append(reconcileErrors, fmt.Errorf("apply managed firewall: %w", err))
@@ -511,6 +506,14 @@ func (c *Controller) resolveMode(ctx context.Context, service Service, snapshot 
 }
 
 func directAddress(service Service, snapshot netwatch.Snapshot, selection serviceaddr.Selection, managed map[netip.Addr]struct{}, now time.Time) (netip.Addr, error) {
+	// Direct mode has no proxy in the path, so the backend must already be
+	// listening on the public port. Without this check auto mode can select
+	// direct for a backend on a different port, and the probe that follows
+	// can be satisfied by Bifrost's own splice listener from a previous run,
+	// producing a service that resolves to an address nothing serves.
+	if service.Backend.Port() != service.ListenPort {
+		return netip.Addr{}, fmt.Errorf("direct mode needs the backend port %d to equal the public port %d", service.Backend.Port(), service.ListenPort)
+	}
 	if service.PublicAddress.IsValid() {
 		for _, candidate := range snapshot.Candidates {
 			if candidate.Prefix.Addr() == service.PublicAddress && eligibleCandidate(candidate, now) {
@@ -519,8 +522,10 @@ func directAddress(service Service, snapshot netwatch.Snapshot, selection servic
 		}
 		return netip.Addr{}, fmt.Errorf("configured direct address %s is not eligible on %s", service.PublicAddress, snapshot.InterfaceName)
 	}
-	if !service.Backend.Addr().IsUnspecified() {
-		return netip.Addr{}, errors.New("direct mode without public_address requires an unspecified IPv6 backend")
+	if !service.Backend.Addr().Is6() || !service.Backend.Addr().IsUnspecified() {
+		// 0.0.0.0 is unspecified too, but it is an IPv4 wildcard: a backend
+		// bound there is not listening on the public IPv6 address.
+		return netip.Addr{}, errors.New("direct mode without public_address requires a backend bound to [::]")
 	}
 	if !selection.Prefix.IsValid() {
 		return netip.Addr{}, errors.New("no selected prefix for observed direct address")
