@@ -70,7 +70,7 @@ Use `--offline` to skip this and every other check that leaves the host.
 
 ### `firewall`
 
-Bifrost reads nftables and reports an authoritative input chain that could drop inbound IPv6. It does not change firewall rules in v1; `firewall.mode` is advisory.
+In managed mode this reports that Bifrost owns the policy, and warns when another table's drop policy can override it. In advisory mode Bifrost only reads nftables and reports an authoritative input chain that could drop inbound IPv6, or reports that nothing filters inbound IPv6 at all: on a router that permits all inbound IPv6, that means every listening port on the host is reachable from the internet, not only the published services. Switching to `firewall.mode: managed` is the fix.
 
 Add service-scoped accepts to whichever firewall manager owns the policy. A separate Bifrost table cannot override another table's drop. See [firewall](../../networking/firewall/).
 

@@ -49,7 +49,9 @@ dns:
     api_token_file: /etc/bifrost/cloudflare-token
 
 firewall:
-  mode: advisory
+  mode: managed
+  allow_ports:
+    - 22
 
 probe: {}
 
@@ -79,7 +81,9 @@ static_services: []
 | `secret_file` | Set the path to the address secret. |
 | `settle_window` | Set the delay after a network or Docker change. |
 | `drain_grace` | Set the overlap and connection drain time. |
-| `firewall.mode` | Use `advisory` in v1. |
+| `firewall.mode` | Use `managed` to let Bifrost own the inbound IPv6 policy, or `advisory` to only report on the existing one. |
+| `firewall.trusted_interfaces` | Managed mode only. Interfaces whose inbound traffic is accepted in full, such as a VPN link. |
+| `firewall.allow_ports` | Managed mode only. Extra inbound TCP ports accepted on every address. Put SSH here when you administer the host over IPv6. |
 | `probe.endpoint` | Set an HTTPS probe URL only when you trust that service. |
 | `metrics.listen` | Use a loopback IP address and port. |
 

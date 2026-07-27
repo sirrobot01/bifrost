@@ -17,6 +17,7 @@ import (
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
 	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"github.com/sirrobot01/bifrost/internal/exposure"
+	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/observability"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
@@ -101,6 +102,20 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
+	var firewall hostfw.Manager
+	var allowances hostfw.Spec
+	if configFile.Firewall.Managed() {
+		firewall, err = hostfw.New()
+		if err != nil {
+			return nil, fmt.Errorf("managed firewall: %w", err)
+		}
+		allowances = hostfw.Spec{
+			TrustedInterfaces: configFile.Firewall.TrustedInterfaces,
+			AllowPorts:        configFile.Firewall.AllowPorts,
+		}
+		logger.Warn("managed firewall mode is enabled: inbound IPv6 will be dropped except for published services and configured allowances",
+			"trusted_interfaces", configFile.Firewall.TrustedInterfaces, "allow_ports", configFile.Firewall.AllowPorts)
+	}
 	certificates, err := certauto.NewManager(certauto.Config{
 		Provider:     provider,
 		StateDir:     configFile.ACME.StateDir,
@@ -113,10 +128,12 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		return nil, fmt.Errorf("certificate manager: %w", err)
 	}
 	controller, err := NewController(ControllerConfig{
-		Addresses:    addressManager,
-		Deriver:      deriver,
-		Publisher:    publisher,
-		Certificates: certificates,
+		Addresses:          addressManager,
+		Deriver:            deriver,
+		Publisher:          publisher,
+		Certificates:       certificates,
+		Firewall:           firewall,
+		FirewallAllowances: allowances,
 		Listen: func(ctx context.Context, listenerConfig exposure.Config) (Splicer, error) {
 			return exposure.Listen(ctx, listenerConfig)
 		},

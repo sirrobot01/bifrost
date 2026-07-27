@@ -17,6 +17,7 @@ import (
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"github.com/sirrobot01/bifrost/internal/exposure"
+	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
@@ -83,11 +84,17 @@ type ControllerConfig struct {
 	Now         func() time.Time
 	CheckDirect func(context.Context, netip.AddrPort) error
 	// Certificates enables TLS termination for services that ask for it.
-	Certificates      CertificateSource
-	PrefixOverride    netip.Prefix
-	GlobalLimiter     *exposure.Limiter
-	EdgeVerifier      *edgeauth.Verifier
-	EdgeHeaderTimeout time.Duration
+	Certificates CertificateSource
+	// Firewall, when set, makes Bifrost authoritative for inbound IPv6: the
+	// managed table accepts the published sockets and drops the rest.
+	Firewall hostfw.Manager
+	// FirewallAllowances are the operator's extra accepts, applied alongside
+	// the published sockets.
+	FirewallAllowances hostfw.Spec
+	PrefixOverride     netip.Prefix
+	GlobalLimiter      *exposure.Limiter
+	EdgeVerifier       *edgeauth.Verifier
+	EdgeHeaderTimeout  time.Duration
 }
 
 type Controller struct {
@@ -98,6 +105,43 @@ type Controller struct {
 	// for minutes (certificate issuance, provider calls); status readers must
 	// never wait behind it.
 	status atomic.Pointer[[]statusEntry]
+	// appliedFirewall is the last spec written to the host, so an unchanged
+	// policy is not rewritten on every reconcile.
+	appliedFirewall hostfw.Spec
+	firewallApplied bool
+}
+
+// applyFirewall writes the managed policy for the services in hand plus any
+// additional endpoints about to be prepared. It runs before publication so a
+// name never resolves to an address whose port is still dropped. Must be
+// called with mu held.
+func (c *Controller) applyFirewall(ctx context.Context, pending []hostfw.Endpoint) error {
+	if c.config.Firewall == nil {
+		return nil
+	}
+	spec := hostfw.Spec{
+		Endpoints:         pending,
+		TrustedInterfaces: c.config.FirewallAllowances.TrustedInterfaces,
+		AllowPorts:        c.config.FirewallAllowances.AllowPorts,
+	}
+	for _, state := range c.services {
+		for _, endpoint := range state.endpoints {
+			if endpoint.splicer == nil {
+				continue
+			}
+			spec.Endpoints = append(spec.Endpoints, hostfw.Endpoint{Service: state.spec.ID, Address: endpoint.address, Port: state.spec.ListenPort})
+		}
+	}
+	if c.firewallApplied && spec.Equal(c.appliedFirewall) {
+		return nil
+	}
+	if err := c.config.Firewall.Apply(ctx, spec); err != nil {
+		return err
+	}
+	c.config.Logger.Info("applied managed firewall policy", "policy", spec.Describe())
+	c.appliedFirewall = spec
+	c.firewallApplied = true
+	return nil
 }
 
 // statusEntry is an immutable copy of one service's shape. Live counters come
@@ -259,9 +303,23 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 				actions = append(actions, Action{Service: id, Kind: "certificate", Detail: "obtain or reuse a certificate for " + service.DNSName + " via dns-01"})
 			}
 			actions = append(actions, Action{Service: id, Kind: "publish", Detail: fmt.Sprintf("AAAA %s -> %s", service.DNSName, address)})
-			continue
 		}
 		plans = append(plans, plan{service: service, mode: mode, address: address})
+	}
+
+	if dryRun {
+		// The firewall policy is the one planned change an operator cannot
+		// undo by pressing ctrl-c, so the dry run states it explicitly.
+		if c.config.Firewall != nil {
+			preview := hostfw.Spec{TrustedInterfaces: c.config.FirewallAllowances.TrustedInterfaces, AllowPorts: c.config.FirewallAllowances.AllowPorts}
+			for _, planned := range plans {
+				if planned.mode == ModeSplice {
+					preview.Endpoints = append(preview.Endpoints, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
+				}
+			}
+			actions = append(actions, Action{Kind: "firewall", Detail: "drop inbound IPv6 except: " + preview.Describe()})
+		}
+		return actions, nil
 	}
 
 	// Warm certificates concurrently before any service is prepared: one slow
@@ -283,6 +341,18 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	certificateWait.Wait()
 
 	var reconcileErrors []error
+	// Open the planned sockets before anything is published. A failure here
+	// is reported but does not hold the services back: another firewall may
+	// already permit them, and check reports the mismatch either way.
+	pending := make([]hostfw.Endpoint, 0, len(plans))
+	for _, planned := range plans {
+		if planned.mode == ModeSplice {
+			pending = append(pending, hostfw.Endpoint{Service: planned.service.ID, Address: planned.address, Port: planned.service.ListenPort})
+		}
+	}
+	if err := c.applyFirewall(ctx, pending); err != nil {
+		reconcileErrors = append(reconcileErrors, fmt.Errorf("apply managed firewall: %w", err))
+	}
 	for index, planned := range plans {
 		id := planned.service.ID
 		if err := certificateErrors[index]; err != nil {
@@ -358,6 +428,12 @@ func (c *Controller) Sweep(ctx context.Context) ([]Action, error) {
 	if err := c.retireExpired(ctx); err != nil {
 		return actions, err
 	}
+	// Retiring an endpoint removes its address, so its accept must go too.
+	if len(actions) > 0 {
+		if err := c.applyFirewall(ctx, nil); err != nil {
+			return actions, fmt.Errorf("apply managed firewall: %w", err)
+		}
+	}
 	return actions, nil
 }
 
@@ -399,6 +475,16 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 			}
 		}
 		delete(c.services, id)
+	}
+	// Remove the managed table so a stopped daemon leaves the host exactly as
+	// it was before it started. A crash leaves the table in place, which fails
+	// closed; only a clean stop reverts the policy.
+	if c.config.Firewall != nil && c.firewallApplied {
+		if err := c.config.Firewall.Remove(ctx); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf("remove managed firewall: %w", err))
+		} else {
+			c.firewallApplied = false
+		}
 	}
 	return errors.Join(shutdownErrors...)
 }

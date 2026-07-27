@@ -13,7 +13,13 @@ dns:
     api_token_file: /etc/bifrost/cloudflare-token
 
 firewall:
-  mode: advisory
+  # managed: Bifrost owns an nftables table that drops inbound IPv6 except for
+  # the published services and the allowances below. advisory: report only.
+  mode: managed
+  trusted_interfaces: []
+  # Keep administrative access reachable before enabling managed mode.
+  allow_ports:
+    - 22
 
 probe: {}
 

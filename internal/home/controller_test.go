@@ -13,6 +13,7 @@ import (
 
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/exposure"
+	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
@@ -254,6 +255,88 @@ func (f *fakeCertificates) Certificate(_ context.Context, name string) (*tls.Cer
 }
 
 func (f *fakeCertificates) TLSConfig(string) *tls.Config { return &tls.Config{} }
+
+type fakeFirewall struct {
+	events   *[]string
+	applied  []hostfw.Spec
+	removed  int
+	applyErr error
+}
+
+func (f *fakeFirewall) Apply(_ context.Context, spec hostfw.Spec) error {
+	if f.applyErr != nil {
+		return f.applyErr
+	}
+	f.applied = append(f.applied, spec)
+	*f.events = append(*f.events, "firewall:"+spec.Describe())
+	return nil
+}
+
+func (f *fakeFirewall) Remove(context.Context) error {
+	f.removed++
+	return nil
+}
+
+func TestControllerOpensFirewallBeforePublishing(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	firewall := &fakeFirewall{events: &fixture.events}
+	fixture.controller.config.Firewall = firewall
+	fixture.controller.config.FirewallAllowances = hostfw.Spec{TrustedInterfaces: []string{"tailscale0"}, AllowPorts: []uint16{22}}
+
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	firewallIndex := slices.IndexFunc(fixture.events, func(event string) bool { return strings.HasPrefix(event, "firewall:") })
+	publishIndex := slices.Index(fixture.events, "dns:media.example.com")
+	if firewallIndex < 0 || publishIndex < 0 || firewallIndex > publishIndex {
+		t.Fatalf("firewall must open before publication; events = %v", fixture.events)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("applied %d specs", len(firewall.applied))
+	}
+	spec := firewall.applied[0]
+	if len(spec.Endpoints) != 1 || spec.Endpoints[0].Port != 443 {
+		t.Fatalf("endpoints = %+v", spec.Endpoints)
+	}
+	if !slices.Equal(spec.AllowPorts, []uint16{22}) || !slices.Equal(spec.TrustedInterfaces, []string{"tailscale0"}) {
+		t.Fatalf("allowances lost: %+v", spec)
+	}
+
+	// An unchanged policy must not be rewritten on every reconcile.
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("unchanged policy rewritten %d times", len(firewall.applied))
+	}
+
+	// A clean stop reverts the host to its pre-Bifrost policy.
+	if err := fixture.controller.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if firewall.removed != 1 {
+		t.Fatalf("managed table removed %d times on shutdown", firewall.removed)
+	}
+}
+
+func TestControllerPublishesDespiteFirewallFailure(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	fixture.controller.config.Firewall = &fakeFirewall{events: &fixture.events, applyErr: errors.New("netlink refused")}
+
+	_, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false)
+	if err == nil || !strings.Contains(err.Error(), "managed firewall") {
+		t.Fatalf("err = %v, want the firewall failure reported", err)
+	}
+	// Another firewall may already permit the service, so the publication
+	// still happens and the error only drives the retry.
+	if !slices.Contains(fixture.events, "dns:media.example.com") {
+		t.Fatalf("service was not published; events = %v", fixture.events)
+	}
+}
 
 func TestControllerIsolatesCertificateFailures(t *testing.T) {
 	t.Parallel()

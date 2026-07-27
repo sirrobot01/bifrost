@@ -76,7 +76,22 @@ type Dynv6 struct {
 }
 
 type Firewall struct {
+	// Mode is "advisory" to only report the host policy, or "managed" to let
+	// Bifrost own an nftables table that drops inbound IPv6 except for the
+	// published services and the allowances below.
 	Mode string `yaml:"mode"`
+	// TrustedInterfaces accept all inbound traffic. Use for links that carry
+	// their own authentication, such as a VPN.
+	TrustedInterfaces []string `yaml:"trusted_interfaces,omitempty"`
+	// AllowPorts are extra inbound TCP ports accepted on every address, for
+	// services Bifrost does not publish but you still need reachable. SSH
+	// belongs here when you administer the host over IPv6.
+	AllowPorts []uint16 `yaml:"allow_ports,omitempty"`
+}
+
+// Managed reports whether Bifrost owns the host firewall policy.
+func (f Firewall) Managed() bool {
+	return f.Mode == "managed"
 }
 
 type Probe struct {
@@ -216,8 +231,8 @@ func (c Config) Validate() error {
 	if err := c.DNS.validate(); err != nil {
 		return fmt.Errorf("dns: %w", err)
 	}
-	if c.Firewall.Mode != "advisory" {
-		return errors.New("firewall.mode must be advisory in v1")
+	if err := c.Firewall.validate(); err != nil {
+		return fmt.Errorf("firewall: %w", err)
 	}
 	if err := c.Probe.validate(); err != nil {
 		return fmt.Errorf("probe: %w", err)
@@ -324,6 +339,26 @@ func (e Edge) validate() error {
 	}
 	if e.MaxClockSkew.Duration() <= 0 || e.HeaderTimeout.Duration() <= 0 {
 		return errors.New("max_clock_skew and header_timeout must be positive")
+	}
+	return nil
+}
+
+func (f Firewall) validate() error {
+	if f.Mode != "advisory" && f.Mode != "managed" {
+		return errors.New("mode must be advisory or managed")
+	}
+	if !f.Managed() && (len(f.TrustedInterfaces) > 0 || len(f.AllowPorts) > 0) {
+		return errors.New("trusted_interfaces and allow_ports apply to managed mode only")
+	}
+	for _, name := range f.TrustedInterfaces {
+		if name == "" || len(name) > 15 {
+			return fmt.Errorf("trusted interface %q is not a valid interface name", name)
+		}
+	}
+	for _, port := range f.AllowPorts {
+		if port == 0 {
+			return errors.New("allow_ports must not contain 0")
+		}
 	}
 	return nil
 }

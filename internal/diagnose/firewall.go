@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/sirrobot01/bifrost/internal/hostfw"
 )
 
 var essentialICMPv6Types = []uint8{1, 2, 3, 4}
@@ -26,22 +28,48 @@ type FirewallAuditor interface {
 
 func firewallFindings(chains []FirewallChain) []Finding {
 	dropChains := make([]FirewallChain, 0, len(chains))
+	managed := false
 	for _, chain := range chains {
-		if chain.DropPolicy {
-			dropChains = append(dropChains, chain)
+		if !chain.DropPolicy {
+			continue
 		}
+		if chain.Table == hostfw.TableName {
+			// Bifrost's own managed table. Its accepts are derived from the
+			// published services, so it is the desired state, not a hazard.
+			managed = true
+			continue
+		}
+		dropChains = append(dropChains, chain)
 	}
-	if len(dropChains) == 0 {
-		return []Finding{{Check: "firewall", Severity: SeverityInfo, Summary: "no nftables IPv6 input base chain with a drop policy was found"}}
+	var findings []Finding
+	switch {
+	case managed && len(dropChains) == 0:
+		findings = append(findings, Finding{Check: "firewall", Severity: SeverityInfo, Summary: "Bifrost manages the inbound IPv6 policy for this host"})
+	case managed:
+		findings = append(findings, Finding{
+			Check:       "firewall",
+			Severity:    SeverityWarning,
+			Summary:     "another nftables input chain can drop inbound IPv6 alongside the managed table",
+			Detail:      formatDropChains(dropChains),
+			Remediation: "add service-scoped accepts to that firewall manager; the Bifrost table cannot override another table's drop",
+		})
+	case len(dropChains) == 0:
+		return []Finding{{
+			Check:       "firewall",
+			Severity:    SeverityInfo,
+			Summary:     "no nftables IPv6 input base chain with a drop policy was found",
+			Detail:      "inbound IPv6 reaches this host unfiltered unless a router or another firewall filters it",
+			Remediation: "set firewall.mode to managed so Bifrost scopes inbound IPv6 to the published services",
+		}}
+	default:
+		findings = append(findings, Finding{
+			Check:       "firewall",
+			Severity:    SeverityWarning,
+			Summary:     "an authoritative nftables input chain can drop inbound IPv6",
+			Detail:      formatDropChains(dropChains),
+			Remediation: "add service-scoped accepts to the authoritative firewall manager; a separate Bifrost table cannot override this drop",
+		})
 	}
-
-	findings := []Finding{{
-		Check:       "firewall",
-		Severity:    SeverityWarning,
-		Summary:     "an authoritative nftables input chain can drop inbound IPv6",
-		Detail:      formatDropChains(dropChains),
-		Remediation: "add service-scoped accepts to the authoritative firewall manager; a separate Bifrost table cannot override this drop",
-	}}
 
 	for _, chain := range dropChains {
 		if chain.AcceptsAllICMPv6 {
