@@ -87,7 +87,7 @@ func TestServiceFindingsIdentifyPMTUBlackhole(t *testing.T) {
 	address := netip.MustParseAddr("2001:db8::1")
 	checker := NewChecker(fixedResolver{addresses: []netip.Addr{address}}, UnavailableFirewallAuditor(errors.New("unused")))
 	findings := checker.serviceFindings(t.Context(), Service{Name: "media", DNSName: "media.example.com", Address: address, Port: 443}, nil, 1500, fixedProber{
-		result: ProbeResult{Reachable: true, PathMTU: 1280, PacketTooBigWorks: false},
+		result: ProbeResult{Reachable: true, PathMTU: 1280, PathMTUMeasured: true, PacketTooBigWorks: false},
 	})
 
 	if len(findings) != 4 || findings[3].Check != "pmtu" || findings[3].Severity != SeverityError {

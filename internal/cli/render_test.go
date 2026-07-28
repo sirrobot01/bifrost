@@ -126,39 +126,59 @@ func TestWriteServiceReportGroupsFindings(t *testing.T) {
 
 func TestWriteCheckSummary(t *testing.T) {
 	tests := []struct {
-		name     string
-		findings []diagnose.Finding
-		want     string
+		name         string
+		verification diagnose.Verification
+		findings     []diagnose.Finding
+		want         string
+		wantCaveat   bool
 	}{
 		{
-			name:     "clean",
-			findings: []diagnose.Finding{{Severity: diagnose.SeverityInfo}},
-			want:     "All checks passed.",
+			name:         "clean but unverified",
+			verification: diagnose.VerificationNone,
+			findings:     []diagnose.Finding{{Severity: diagnose.SeverityInfo}},
+			want:         "Every local check passed.",
+			wantCaveat:   true,
 		},
 		{
-			name:     "warnings only",
-			findings: []diagnose.Finding{{Check: "mtu", Severity: diagnose.SeverityWarning}, {Check: "privileges", Severity: diagnose.SeverityWarning}},
-			want:     "All checks passed, with 2 warnings to review.",
+			name:         "clean and externally verified",
+			verification: diagnose.VerificationExternal,
+			findings:     []diagnose.Finding{{Severity: diagnose.SeverityInfo}},
+			want:         "answered from outside this network",
 		},
 		{
-			name:     "single error",
-			findings: []diagnose.Finding{{Severity: diagnose.SeverityError}},
-			want:     "1 problem blocks the published path.",
+			name:         "warnings only",
+			verification: diagnose.VerificationNone,
+			findings:     []diagnose.Finding{{Check: "mtu", Severity: diagnose.SeverityWarning}, {Check: "privileges", Severity: diagnose.SeverityWarning}},
+			want:         "Every local check passed, with 2 warnings to review.",
+			wantCaveat:   true,
 		},
 		{
-			name:     "errors and warnings",
-			findings: []diagnose.Finding{{Severity: diagnose.SeverityError}, {Severity: diagnose.SeverityError}, {Severity: diagnose.SeverityWarning}},
-			want:     "2 problems block the published path, and 1 warning to review.",
+			name:         "single error",
+			verification: diagnose.VerificationNone,
+			findings:     []diagnose.Finding{{Severity: diagnose.SeverityError}},
+			want:         "1 problem blocks the published path.",
+		},
+		{
+			name:         "errors and warnings",
+			verification: diagnose.VerificationNone,
+			findings:     []diagnose.Finding{{Severity: diagnose.SeverityError}, {Severity: diagnose.SeverityError}, {Severity: diagnose.SeverityWarning}},
+			want:         "2 problems block the published path, and 1 warning to review.",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := writeCheckSummary(&output, diagnose.Report{Findings: test.findings}); err != nil {
+			report := diagnose.Report{Verification: test.verification, Findings: test.findings}
+			if err := writeCheckSummary(&output, report); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(output.String(), test.want) {
 				t.Fatalf("summary = %q, want %q", output.String(), test.want)
+			}
+			// A verdict without outside evidence must say so, every time.
+			caveat := strings.Contains(output.String(), "reachable from the internet")
+			if caveat != test.wantCaveat {
+				t.Fatalf("caveat present = %v, want %v: %q", caveat, test.wantCaveat, output.String())
 			}
 		})
 	}

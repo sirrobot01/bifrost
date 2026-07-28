@@ -145,6 +145,22 @@ func (m *Manager) RenewDue(ctx context.Context) ([]string, error) {
 	return renewed, errors.Join(renewErrors...)
 }
 
+// Expiries reports when each held certificate stops being valid, so a
+// renewal that has been failing becomes visible before the service breaks.
+// Renewal runs 30 days out, so anything materially lower has been failing for
+// a while and nothing else would have said so.
+func (m *Manager) Expiries() map[string]time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	expiries := make(map[string]time.Time, len(m.certs))
+	for name, certificate := range m.certs {
+		if certificate.Leaf != nil {
+			expiries[name] = certificate.Leaf.NotAfter
+		}
+	}
+	return expiries
+}
+
 // TLSConfig serves name's current certificate. The callback only reads the
 // cache, so renewals swap certificates without touching the listener.
 func (m *Manager) TLSConfig(name string) *tls.Config {

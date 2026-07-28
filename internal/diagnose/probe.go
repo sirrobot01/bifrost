@@ -16,11 +16,18 @@ import (
 type ProbeRequest struct {
 	Address netip.Addr `json:"address"`
 	Port    uint16     `json:"port"`
+	// ServerName lets a prober that dispatches on TLS names reach the right
+	// service. Probers that dial the address directly ignore it.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 type ProbeResult struct {
-	Reachable         bool `json:"reachable"`
-	PathMTU           int  `json:"path_mtu,omitempty"`
+	Reachable bool `json:"reachable"`
+	PathMTU   int  `json:"path_mtu,omitempty"`
+	// PathMTUMeasured distinguishes "the probe found no blackhole" from "the
+	// probe never looked", so a prober that only tests reachability does not
+	// produce a false PMTU verdict.
+	PathMTUMeasured   bool `json:"path_mtu_measured"`
 	PacketTooBigWorks bool `json:"packet_too_big_works"`
 }
 
@@ -76,5 +83,7 @@ func (p *HTTPProber) Probe(ctx context.Context, request ProbeRequest) (ProbeResu
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return ProbeResult{}, fmt.Errorf("decode probe response: %w", err)
 	}
+	// A remote probe reports path MTU, so its verdict on Packet Too Big counts.
+	result.PathMTUMeasured = true
 	return result, nil
 }

@@ -151,6 +151,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	flags.SetOutput(r.Stderr)
 	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
+	requireExternal := flags.Bool("require-external", false, "fail unless the services answered from outside this network")
 	if err := flags.Parse(arguments); err != nil {
 		return 0, err
 	}
@@ -172,12 +173,9 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	if len(services) == 0 {
 		return 0, errors.New("config has no services to check")
 	}
-	var prober diagnose.ExternalProber
-	if configFile.Probe.Endpoint != "" {
-		prober, err = diagnose.NewHTTPProber(configFile.Probe.Endpoint, nil)
-		if err != nil {
-			return 0, err
-		}
+	prober, err := externalProber(configFile)
+	if err != nil {
+		return 0, err
 	}
 	checker := diagnose.NewChecker(nil, nil)
 	report, err := checker.Check(ctx, diagnose.Input{Interface: configFile.Interface, Services: services, Probe: prober})
@@ -219,7 +217,30 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	if !report.Healthy() {
 		return 1, nil
 	}
+	if *requireExternal && report.Verification != diagnose.VerificationExternal {
+		_, _ = fmt.Fprintln(r.Stderr, "bifrost check: --require-external was set but nothing outside this host confirmed reachability")
+		return 1, nil
+	}
 	return 0, nil
+}
+
+// externalProber selects how reachability is confirmed from outside the host.
+// A configured endpoint wins; otherwise a configured edge is used, because an
+// edge already sits outside the network and reaching a service through it
+// exercises the same inbound path a real client takes. Only a deployment with
+// neither goes unverified.
+func externalProber(configFile config.Config) (diagnose.ExternalProber, error) {
+	if configFile.Probe.Endpoint != "" {
+		return diagnose.NewHTTPProber(configFile.Probe.Endpoint, nil)
+	}
+	if configFile.Edge.Enabled && configFile.Edge.IPv4Address != "" {
+		address, err := netip.ParseAddr(configFile.Edge.IPv4Address)
+		if err != nil {
+			return nil, fmt.Errorf("edge.ipv4_address: %w", err)
+		}
+		return diagnose.NewEdgeProber(address), nil
+	}
+	return nil, nil
 }
 
 func (r Runner) runStatus(ctx context.Context, arguments []string) error {

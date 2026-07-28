@@ -281,6 +281,11 @@ func severityCounts(report diagnose.Report) (errors, warnings int) {
 
 // writeCheckSummary closes a check run with a verdict, mirroring the one
 // doctor prints, so a report never ends on a bare finding list.
+//
+// The verdict never claims a service is published on host-local evidence
+// alone. A host that is listening, addressed, certified, and correctly
+// published in DNS is indistinguishable from one the internet cannot reach,
+// and reporting the two identically hid a three day outage.
 func writeCheckSummary(writer io.Writer, report diagnose.Report) error {
 	errorCount, warningCount := severityCounts(report)
 	if errorCount > 0 {
@@ -294,10 +299,21 @@ func writeCheckSummary(writer io.Writer, report diagnose.Report) error {
 		_, err := fmt.Fprintln(writer, summary+".")
 		return err
 	}
+
+	scope := "Every local check passed"
+	if report.Verification == diagnose.VerificationExternal {
+		scope = "Every check passed, and the services answered from outside this network"
+	}
+	summary := "\n" + scope
 	if warningCount > 0 {
-		_, err := fmt.Fprintf(writer, "\nAll checks passed, with %s to review.\n", pluralize(warningCount, "warning"))
+		summary += fmt.Sprintf(", with %s to review", pluralize(warningCount, "warning"))
+	}
+	if _, err := fmt.Fprintln(writer, summary+"."); err != nil {
 		return err
 	}
-	_, err := fmt.Fprint(writer, "\nAll checks passed.\n")
-	return err
+	if report.Verification != diagnose.VerificationExternal {
+		_, err := fmt.Fprint(writer, "Nothing here proves the services are reachable from the internet: every\ncheck above ran on this host. Enable an external probe to find out.\n")
+		return err
+	}
+	return nil
 }

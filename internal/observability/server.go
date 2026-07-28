@@ -27,12 +27,20 @@ type Service struct {
 	DialFailures      uint64         `json:"dial_failures_total"`
 }
 
+// Certificate reports one managed certificate's expiry, so a failing renewal
+// is visible to monitoring rather than only to a later handshake failure.
+type Certificate struct {
+	Name     string    `json:"name"`
+	NotAfter time.Time `json:"not_after"`
+}
+
 type Snapshot struct {
-	Ready         bool      `json:"ready"`
-	StartedAt     time.Time `json:"started_at"`
-	LastReconcile time.Time `json:"last_reconcile,omitempty"`
-	LastError     string    `json:"last_error,omitempty"`
-	Services      []Service `json:"services"`
+	Ready         bool          `json:"ready"`
+	StartedAt     time.Time     `json:"started_at"`
+	LastReconcile time.Time     `json:"last_reconcile,omitempty"`
+	LastError     string        `json:"last_error,omitempty"`
+	Services      []Service     `json:"services"`
+	Certificates  []Certificate `json:"certificates,omitempty"`
 }
 
 type Server struct {
@@ -114,6 +122,12 @@ func metrics(snapshot Snapshot) string {
 	output.WriteString("# HELP bifrost_connections_accepted_total Accepted TCP connections.\n# TYPE bifrost_connections_accepted_total counter\n")
 	output.WriteString("# HELP bifrost_connections_rejected_total TCP connections rejected by a limit.\n# TYPE bifrost_connections_rejected_total counter\n")
 	output.WriteString("# HELP bifrost_backend_dial_failures_total Failed backend TCP dials.\n# TYPE bifrost_backend_dial_failures_total counter\n")
+	if len(snapshot.Certificates) > 0 {
+		output.WriteString("# HELP bifrost_certificate_expiry_seconds Unix time when a managed certificate expires.\n# TYPE bifrost_certificate_expiry_seconds gauge\n")
+		for _, certificate := range snapshot.Certificates {
+			fmt.Fprintf(&output, "bifrost_certificate_expiry_seconds{name=%s} %d\n", strconv.Quote(certificate.Name), certificate.NotAfter.Unix())
+		}
+	}
 	for _, service := range snapshot.Services {
 		labels := "service=" + strconv.Quote(service.ID) + ",mode=" + strconv.Quote(service.Mode)
 		fmt.Fprintf(&output, "bifrost_connections_active{%s} %d\n", labels, service.ActiveConnections)

@@ -3,11 +3,13 @@
 package home
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -370,6 +372,12 @@ func (r *Runtime) observabilitySnapshot() observability.Snapshot {
 	r.stateMu.RLock()
 	snapshot := observability.Snapshot{Ready: r.ready, StartedAt: r.startedAt, LastReconcile: r.lastRun, LastError: r.lastError}
 	r.stateMu.RUnlock()
+	if r.certificates != nil {
+		for name, expiry := range r.certificates.Expiries() {
+			snapshot.Certificates = append(snapshot.Certificates, observability.Certificate{Name: name, NotAfter: expiry})
+		}
+		slices.SortFunc(snapshot.Certificates, func(a, b observability.Certificate) int { return cmp.Compare(a.Name, b.Name) })
+	}
 	for _, status := range r.controller.Status() {
 		snapshot.Services = append(snapshot.Services, observability.Service{
 			ID:                status.ID,

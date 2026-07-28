@@ -4,8 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServerReportsReadinessAndMetrics(t *testing.T) {
@@ -51,5 +53,28 @@ func TestServerIsUnreadyBeforeReconcile(t *testing.T) {
 	server.handler().ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", response.Code)
+	}
+}
+
+// A renewal that has been failing is invisible until a handshake breaks, so
+// expiry belongs in metrics where monitoring can alert on it.
+func TestMetricsExposeCertificateExpiry(t *testing.T) {
+	t.Parallel()
+
+	expiry := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	rendered := metrics(Snapshot{
+		Ready:        true,
+		Certificates: []Certificate{{Name: "media.example.com", NotAfter: expiry}},
+	})
+	want := `bifrost_certificate_expiry_seconds{name="media.example.com"} ` + strconv.FormatInt(expiry.Unix(), 10)
+	if !strings.Contains(rendered, want) {
+		t.Fatalf("metrics lack the certificate gauge:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "# TYPE bifrost_certificate_expiry_seconds gauge") {
+		t.Fatalf("gauge is missing its TYPE line:\n%s", rendered)
+	}
+	// A deployment with no managed certificates should not emit an empty family.
+	if strings.Contains(metrics(Snapshot{Ready: true}), "bifrost_certificate_expiry_seconds") {
+		t.Fatal("the certificate family appears with no certificates")
 	}
 }

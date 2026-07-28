@@ -89,6 +89,7 @@ func (c *Checker) Check(ctx context.Context, input Input) (Report, error) {
 	} else {
 		report.Findings = append(report.Findings, firewallFindings(chains)...)
 	}
+	report.classifyVerification()
 	return report, nil
 }
 
@@ -203,7 +204,7 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external reachability and PMTU were not tested", Remediation: "configure an explicit external probe endpoint to distinguish router filtering from host state"})
 		return findings
 	}
-	result, err := prober.Probe(ctx, ProbeRequest{Address: service.Address, Port: service.Port})
+	result, err := prober.Probe(ctx, ProbeRequest{Address: service.Address, Port: service.Port, ServerName: service.DNSName})
 	if err != nil {
 		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external probe failed", Detail: err.Error()})
 		return findings
@@ -212,7 +213,11 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 		findings = append(findings, Finding{Check: "external", Severity: SeverityError, Service: service.Name, Summary: "service is not reachable from the external probe", Remediation: "if local address, listener, and host policy are correct, inspect the customer-edge router IPv6 firewall"})
 		return findings
 	}
-	findings = append(findings, Finding{Check: "external", Severity: SeverityInfo, Service: service.Name, Summary: "service is externally reachable"})
+	findings = append(findings, Finding{Check: "external", Severity: SeverityInfo, Service: service.Name, Summary: "service answered from outside this network"})
+	if !result.PathMTUMeasured {
+		// A prober that only proves reachability must not imply a PMTU verdict.
+		return findings
+	}
 	if !result.PacketTooBigWorks {
 		findings = append(findings, Finding{Check: "pmtu", Severity: SeverityError, Service: service.Name, Summary: "the probe detected a likely PMTU blackhole", Detail: fmt.Sprintf("interface MTU %d, observed path MTU %d", interfaceMTU, result.PathMTU), Remediation: "allow ICMPv6 Packet Too Big end-to-end and verify reduced-MTU links such as PPPoE"})
 	} else {
