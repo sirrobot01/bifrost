@@ -24,6 +24,7 @@ func (r Runner) runDoctor(ctx context.Context, arguments []string) (int, error) 
 	interfaceName := flags.String("interface", "", "publication interface; auto-detected when unambiguous")
 	dockerSocket := flags.String("docker-socket", "", "check this Docker socket for reachability")
 	offline := flags.Bool("offline", false, "skip every check that leaves the host")
+	probeEndpoint := flags.String("probe", "", "HTTPS probe endpoint asked to open an inbound connection to this host")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	if err := flags.Parse(arguments); err != nil {
 		return 0, err
@@ -32,7 +33,15 @@ func (r Runner) runDoctor(ctx context.Context, arguments []string) (int, error) 
 		return 0, errors.New("doctor accepts flags only")
 	}
 
-	report, err := r.preflight(ctx, *interfaceName, *dockerSocket, *offline)
+	var prober diagnose.ExternalProber
+	if *probeEndpoint != "" && !*offline {
+		httpProber, err := diagnose.NewHTTPProber(*probeEndpoint, nil)
+		if err != nil {
+			return 0, err
+		}
+		prober = httpProber
+	}
+	report, err := r.preflight(ctx, *interfaceName, *dockerSocket, *offline, prober)
 	if err != nil {
 		return 0, err
 	}
@@ -54,7 +63,7 @@ func (r Runner) runDoctor(ctx context.Context, arguments []string) (int, error) 
 	return 0, nil
 }
 
-func (r Runner) preflight(ctx context.Context, interfaceName, dockerSocket string, offline bool) (diagnose.Report, error) {
+func (r Runner) preflight(ctx context.Context, interfaceName, dockerSocket string, offline bool, prober diagnose.ExternalProber) (diagnose.Report, error) {
 	if interfaceName == "" {
 		eligible, err := eligibleInterfaces()
 		if err != nil {
@@ -101,6 +110,7 @@ func (r Runner) preflight(ctx context.Context, interfaceName, dockerSocket strin
 		Candidates:   snapshot.Candidates,
 		Privileged:   os.Geteuid() == 0,
 		DockerSocket: dockerSocket,
+		Probe:        prober,
 		SkipNetwork:  offline,
 	})
 }

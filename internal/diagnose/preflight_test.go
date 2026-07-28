@@ -170,3 +170,63 @@ func TestPreflightReportsMultiplePrefixes(t *testing.T) {
 		t.Fatalf("detail = %q", finding.Detail)
 	}
 }
+
+type stubProber struct {
+	result ProbeResult
+	err    error
+	dialed bool
+}
+
+func (p *stubProber) Probe(_ context.Context, request ProbeRequest) (ProbeResult, error) {
+	if p.err != nil {
+		return ProbeResult{}, p.err
+	}
+	if p.result.Reachable {
+		// A real probe proves reachability by connecting, so the stub must too.
+		p.dialed = true
+		connection, err := net.DialTimeout("tcp6", netip.AddrPortFrom(request.Address, request.Port).String(), 2*time.Second)
+		if err != nil {
+			return ProbeResult{Reachable: false}, nil
+		}
+		_ = connection.Close()
+	}
+	return p.result, nil
+}
+
+// Without a probe, doctor must say plainly that it never tested the one thing
+// a host cannot observe about itself.
+func TestPreflightReportsInboundUntested(t *testing.T) {
+	t.Parallel()
+
+	checker := NewChecker(nil, UnavailableFirewallAuditor(errors.New("unused")))
+	report, err := checker.Preflight(t.Context(), PreflightInput{Interface: "lo", MTU: 1500, SkipNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding := findingFor(t, report, "inbound")
+	if finding.Severity != SeverityWarning || !strings.Contains(finding.Summary, "not tested") {
+		t.Fatalf("finding = %+v", finding)
+	}
+}
+
+// With a probe that cannot reach the host, the router is named as the thing
+// no local check can see.
+func TestPreflightDetectsBlockedInbound(t *testing.T) {
+	t.Parallel()
+
+	checker := NewChecker(nil, UnavailableFirewallAuditor(errors.New("unused")))
+	report, err := checker.Preflight(t.Context(), PreflightInput{
+		Interface:   "lo",
+		MTU:         1500,
+		Candidates:  []serviceaddr.Candidate{{Prefix: netip.MustParsePrefix("2001:db8:1::10/64")}},
+		Probe:       &stubProber{result: ProbeResult{Reachable: false}},
+		SkipNetwork: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding := findingFor(t, report, "inbound")
+	if finding.Severity != SeverityError || !strings.Contains(finding.Remediation, "customer-edge router") {
+		t.Fatalf("finding = %+v", finding)
+	}
+}

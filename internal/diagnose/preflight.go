@@ -33,6 +33,9 @@ type PreflightInput struct {
 	Privileged bool
 	// DockerSocket is checked for reachability when it is set.
 	DockerSocket string
+	// Probe, when set, is asked to reach a temporary listener on this host,
+	// which is the only way to learn whether inbound traffic arrives at all.
+	Probe ExternalProber
 	// EgressTarget overrides the IPv6 endpoint used for the egress test.
 	EgressTarget string
 	// SkipNetwork omits every check that leaves the host.
@@ -67,6 +70,7 @@ func (c *Checker) Preflight(ctx context.Context, input PreflightInput) (Report, 
 	})
 	report.Findings = append(report.Findings, mtuFinding(input.MTU))
 	report.Findings = append(report.Findings, prefixFinding(input.Candidates, c.now()))
+	report.Findings = append(report.Findings, c.inboundFinding(ctx, input))
 
 	if input.Privileged {
 		report.Findings = append(report.Findings, Finding{Check: "privileges", Severity: SeverityInfo, Summary: "running with the privilege needed to manage addresses and bind service ports"})
@@ -164,4 +168,89 @@ func (c *Checker) dockerFinding(ctx context.Context, socket string) (Finding, bo
 		Detail:      socket,
 		Remediation: "socket access grants root-level control of this host; prefer a restricted socket proxy",
 	}, true
+}
+
+// inboundFinding is the only preflight check that cannot be answered from the
+// host. Everything else here observes local state, and local state is
+// compatible with a router that silently drops every inbound packet. When a
+// probe is available this binds a temporary listener on an observed global
+// address and asks the probe to reach it, which exercises the customer-edge
+// router before the operator has configured anything worth losing.
+func (c *Checker) inboundFinding(ctx context.Context, input PreflightInput) Finding {
+	if input.Probe == nil {
+		return Finding{
+			Check:       "inbound",
+			Severity:    SeverityWarning,
+			Summary:     "inbound reachability was not tested",
+			Detail:      "every other check here observes this host, and a host looks identical whether or not the internet can reach it",
+			Remediation: "re-run with --probe to have an outside vantage open a connection to this host",
+		}
+	}
+	address, ok := eligibleGlobalAddress(input.Candidates, c.now())
+	if !ok {
+		return Finding{Check: "inbound", Severity: SeverityWarning, Summary: "inbound reachability was not tested", Detail: "no eligible global IPv6 address to listen on"}
+	}
+
+	// Bind the wildcard rather than the address itself: the address may be
+	// managed by something else, and accepting on any address still proves the
+	// packet arrived.
+	listener, err := net.Listen("tcp6", "[::]:0")
+	if err != nil {
+		return Finding{Check: "inbound", Severity: SeverityWarning, Summary: "inbound reachability was not tested", Detail: "could not bind a temporary listener: " + err.Error()}
+	}
+	defer func() { _ = listener.Close() }()
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+
+	accepted := make(chan struct{}, 1)
+	go func() {
+		if connection, err := listener.Accept(); err == nil {
+			_ = connection.Close()
+			accepted <- struct{}{}
+		}
+	}()
+
+	probeContext, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	result, err := input.Probe.Probe(probeContext, ProbeRequest{Address: address, Port: port})
+	if err != nil {
+		return Finding{Check: "inbound", Severity: SeverityWarning, Summary: "the inbound probe could not be run", Detail: err.Error()}
+	}
+
+	select {
+	case <-accepted:
+		return Finding{Check: "inbound", Severity: SeverityInfo, Summary: "inbound IPv6 from the internet reaches this host", Detail: fmt.Sprintf("an outside vantage connected to [%s]:%d", address, port)}
+	case <-time.After(2 * time.Second):
+	}
+	if result.Reachable {
+		// The probe believes it connected but nothing arrived, which means
+		// something answered on its behalf rather than this host.
+		return Finding{Check: "inbound", Severity: SeverityWarning, Summary: "the inbound probe reported success but no connection arrived", Detail: "something between the probe and this host answered instead"}
+	}
+	return Finding{
+		Check:       "inbound",
+		Severity:    SeverityError,
+		Summary:     "inbound IPv6 from the internet does not reach this host",
+		Detail:      fmt.Sprintf("an outside vantage could not open a connection to [%s]:%d", address, port),
+		Remediation: "permit inbound IPv6 on the customer-edge router; nothing on this host can open that path",
+	}
+}
+
+// eligibleGlobalAddress picks an address a probe could plausibly reach:
+// global, stable, and not on its way out. Temporary and deprecated addresses
+// are excluded for the same reason they are never published.
+func eligibleGlobalAddress(candidates []serviceaddr.Candidate, now time.Time) (netip.Addr, bool) {
+	for _, candidate := range candidates {
+		address := candidate.Prefix.Addr()
+		if !address.Is6() || !address.IsGlobalUnicast() || address.IsPrivate() {
+			continue
+		}
+		if candidate.Temporary || candidate.Deprecated {
+			continue
+		}
+		if !candidate.ValidUntil.IsZero() && !now.Before(candidate.ValidUntil) {
+			continue
+		}
+		return address, true
+	}
+	return netip.Addr{}, false
 }
