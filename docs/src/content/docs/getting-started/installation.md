@@ -11,7 +11,7 @@ curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 
 The script detects the CPU and package manager, verifies the download against the release checksum file, and installs the deb or rpm package. Where neither package manager exists, it installs the archive binary to `/usr/local/bin` and prints the remaining setup steps.
 
-The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0750`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
+The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0755`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
 Continue with the [quickstart](../quickstart/) to check the host, create the configuration, and start the service.
 
@@ -59,14 +59,18 @@ sudo install -m 0755 bifrost /usr/local/bin/bifrost
 bifrost version
 ```
 
-The archive does none of the setup a package does, so create the account, the directory, and the unit yourself:
+The archive does none of the setup a package does, so create the accounts, the directory, and the units yourself:
 
 ```sh
 sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin bifrost
-sudo install -d -o bifrost -g bifrost -m 0750 /etc/bifrost
+sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin bifrost-edge
+sudo install -d -o bifrost -g bifrost -m 0755 /etc/bifrost
 sudo install -m 0644 deploy/bifrost.service /etc/systemd/system/bifrost.service
+sudo install -m 0644 deploy/bifrost-edge.service /etc/systemd/system/bifrost-edge.service
 sudo systemctl daemon-reload
 ```
+
+`/etc/bifrost` is deliberately traversable: on a host running both roles, `bifrost-edge` has to reach its own config there. The secrets inside stay `0600`, and Bifrost refuses to read one that is not.
 
 The shipped unit runs `/usr/local/bin/bifrost`; the packages install to `/usr/bin` and repoint the unit with a drop-in. The unit grants `CAP_NET_ADMIN` for splice mode and `CAP_NET_BIND_SERVICE` for ports below 1024, and allows three minutes to stop; keep `TimeoutStopSec` longer than `drain_grace`.
 

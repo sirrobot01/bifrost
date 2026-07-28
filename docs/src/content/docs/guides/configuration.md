@@ -3,9 +3,9 @@ title: Configure Bifrost
 description: Configure the home role, DNS providers, services, Docker, and the edge.
 ---
 
-Bifrost reads strict YAML. Bifrost rejects unknown fields. Bifrost also rejects more than one YAML document.
+Bifrost reads strict YAML: unknown fields and multiple documents are rejected.
 
-Store each secret in a separate file. The file must be a regular file. Group and other users must not have access to it.
+Each secret lives in its own regular file, unreadable by group and other.
 
 ## Create the files by hand
 
@@ -29,68 +29,51 @@ sudo chmod 0600 /etc/bifrost/config.yaml /etc/bifrost/address-secret /etc/bifros
 
 Bifrost refuses any secret file readable by group or other. Review with `bifrost serve --dry-run` before the first start.
 
+Omit anything with a default, including `owner_id` and `secret_file`. A minimal file is easier to keep correct than a full one.
+
 ## Configure the home role
 
-Start with this file:
+Only the interface, a DNS provider, and its credential are required. Everything else has a default:
 
 ```yaml
 version: 1
 interface: eth0
-owner_id: home-1
-secret_file: /etc/bifrost/address-secret
-settle_window: 10s
-drain_grace: 2m
 
 dns:
   provider: cloudflare
-  ttl: 60s
   cloudflare:
-    zone_id: CHANGE_ME
+    zone_id: ZONE_ID
     api_token_file: /etc/bifrost/cloudflare-token
 
-firewall:
-  mode: managed
-  allow_ports:
-    - 22
-
-probe: {}
-
-metrics:
-  listen: 127.0.0.1:9098
-
-docker:
-  enabled: false
-  socket: /var/run/docker.sock
-
-edge:
-  enabled: false
-  max_clock_skew: 30s
-  header_timeout: 250ms
-
-static_services: []
+static_services:
+  - name: media
+    backend: 127.0.0.1:8096
+    listen: 443
+    dns: media.example.com
 ```
 
 ### Home fields
 
-| Field | Requirement |
-|---|---|
-| `version` | Use `1`. |
-| `interface` | Set the interface that has the global IPv6 `/64`. |
-| `prefix_override` | Set an IPv6 `/64` only when you must select one prefix. |
-| `owner_id` | Use one stable ID for this Bifrost installation. |
-| `secret_file` | Set the path to the address secret. |
-| `settle_window` | Set the delay after a network or Docker change. |
-| `drain_grace` | Set the overlap and connection drain time. |
-| `firewall.mode` | Use `managed` to let Bifrost own the inbound IPv6 policy, or `advisory` to only report on the existing one. |
-| `firewall.trusted_interfaces` | Managed mode only. Interfaces whose inbound traffic is accepted in full, such as a VPN link. |
-| `firewall.allow_ports` | Managed mode only. Extra inbound TCP ports accepted on every address. Put SSH here when you administer the host over IPv6. |
-| `firewall.pcp` | Ask the router to permit inbound traffic to the published sockets, using PCP. Most routers do not answer, in which case nothing changes and the manual rule remains the answer. |
-| `probe.endpoint` | Set an HTTPS probe URL only when you trust that service. |
-| `metrics.listen` | Use a loopback IP address and port. |
+| Field | Default | Notes |
+|---|---|---|
+| `version` | — | Must be `1`. |
+| `interface` | — | The interface holding the global IPv6 `/64`. Required. |
+| `prefix_override` | automatic | An IPv6 `/64`, when you must pin the selection. |
+| `owner_id` | this host's hostname | Identifies the records this installation owns. |
+| `secret_file` | `/etc/bifrost/address-secret` | Created by `init`. |
+| `settle_window` | `10s` | Delay after a network or Docker change. |
+| `drain_grace` | `2m` | Overlap and connection drain during a prefix change. |
+| `dns.ttl` | `60s` | Between 60s and 24h. |
+| `firewall.mode` | `advisory` | `managed` lets Bifrost own the inbound IPv6 policy; `advisory` only reports on the existing one. |
+| `firewall.trusted_interfaces` | none | Managed mode only. Interfaces accepted in full, such as a VPN link. |
+| `firewall.allow_ports` | none | Managed mode only. Extra inbound TCP ports on every address. Put SSH here if you administer the host over IPv6. |
+| `firewall.pcp` | `false` | Ask the router to open each published socket. Most routers do not answer, and nothing changes when they do not. |
+| `probe.endpoint` | none | An HTTPS probe URL. An enabled edge already serves this purpose. |
+| `metrics.listen` | `127.0.0.1:9098` | Must be loopback. |
+| `docker.socket` | `/var/run/docker.sock` | Only read when `docker.enabled` is set. |
+| `acme.state_dir` | `/var/lib/bifrost` | Where certificates and the account key are kept. |
 
-Do not change `owner_id` after Bifrost creates DNS records. A new ID does not own the old records.
-
-Do not change the address secret unless you want new splice addresses.
+Do not change `owner_id` after Bifrost creates DNS records: a new ID does not own the old ones. Do not change the address secret unless you want new splice addresses.
 
 ### Prefix selection
 
@@ -110,7 +93,7 @@ Bifrost supports Cloudflare, deSEC, dynv6, and RFC 2136.
 
 If you are unsure which to use: with a domain already on Cloudflare, use Cloudflare. With no domain at all, deSEC and dynv6 both give you a free name (`yourname.dedyn.io`, `yourname.dynv6.net`); deSEC enforces a 3600-second minimum TTL on new domains, dynv6 does not. With your own authoritative server such as BIND, Knot, or PowerDNS, use RFC 2136. Any provider not listed here can still work if it serves your zone from an RFC 2136 server, and `init --interactive` discovers the correct zone from your account for everything except RFC 2136.
 
-The DNS TTL must be from 60 seconds through 24 hours. The value must use whole seconds.
+The DNS TTL must be from 60 seconds through 24 hours.
 
 ### Cloudflare
 
@@ -189,7 +172,7 @@ Requesting a certificate accepts the certificate authority's subscriber agreemen
 
 ## Configure a static service
 
-This example publishes an IPv4-only backend through splice mode:
+Three fields are required. This publishes an IPv4-only backend, terminating TLS on 443:
 
 ```yaml
 static_services:
@@ -197,30 +180,27 @@ static_services:
     backend: 127.0.0.1:2283
     listen: 443
     dns: photos.example.com
-    mode: splice
-    proxy_protocol: false
-    edge: false
 ```
 
 ### Service fields
 
-| Field | Requirement |
-|---|---|
-| `name` | Use a unique and stable service ID. |
-| `backend` | Set an IP address and TCP port. Do not set a host name. |
-| `listen` | Set the public TCP port. |
-| `dns` | Set the public DNS name. |
-| `mode` | Use `direct`, `splice`, or `auto`. |
-| `tls` | Use `auto` (the default) to terminate TLS with an automatic certificate on the splice listener, or `off` for a backend that speaks TLS itself. Direct mode ignores it. |
-| `public_address` | Set the backend IPv6 address when direct mode needs an explicit address. |
-| `proxy_protocol` | Enable this only when the backend accepts PROXY v2. |
-| `edge` | Enable this only for a configured IPv4 edge. Such services use splice mode automatically. |
+| Field | Default | Notes |
+|---|---|---|
+| `name` | — | A unique, stable service ID. Required. |
+| `backend` | — | IP address and TCP port. Not a host name. Required. |
+| `dns` | — | The public DNS name. Required. |
+| `listen` | the backend port | The public TCP port. |
+| `mode` | `auto` | `direct`, `splice`, or `auto`. |
+| `tls` | `auto` | Terminate TLS with an automatic certificate; `off` for a backend that speaks TLS itself. Direct mode ignores it. |
+| `public_address` | observed address | The backend IPv6 address, when direct mode needs an explicit one. |
+| `proxy_protocol` | `false` | Only when the backend accepts PROXY v2. |
+| `edge` | `false` | Only with a configured IPv4 edge. Such services use splice mode automatically. |
 
 ### Direct mode
 
-Direct mode has no Bifrost TCP listener. The backend must own the public IPv6 address. The backend port must equal the public port.
+No Bifrost listener: the backend owns the public IPv6 address and its port equals the public port. Bifrost publishes DNS and stays out of the data path, so it cannot terminate TLS.
 
-Use an explicit address when the backend listens on one address:
+Set an explicit address when the backend listens on only one:
 
 ```yaml
 static_services:
@@ -232,17 +212,13 @@ static_services:
     mode: direct
 ```
 
-Replace the documentation address with a real address on the Bifrost host.
-
 ### Splice mode
 
-Splice mode adds a stable service address to the Bifrost host. Bifrost listens on that address. Bifrost then opens a new TCP connection to the backend.
-
-The backend does not receive the original client address. It receives the Bifrost host address. Enable `proxy_protocol` only when the backend explicitly accepts PROXY v2.
+Bifrost adds a stable service address to the host, listens on it, and opens a new connection to the backend. The backend therefore sees the Bifrost host as its peer, not the client. Enable `proxy_protocol` only when the backend explicitly accepts PROXY v2.
 
 ### Auto mode
 
-Auto mode selects direct mode only when all direct checks pass. Auto mode uses splice mode for all other cases. Check the selected mode with `bifrost status`.
+Auto mode selects direct mode only when every direct condition holds, and splice mode otherwise. A service with `edge: true` is always spliced, since the edge has to reach a Bifrost listener. Check the selected mode with `bifrost status`.
 
 ## Configure Docker discovery
 
@@ -277,26 +253,27 @@ services:
 
 Set `bifrost.network` when the container has more than one Docker network. You can set `bifrost.backend` to an explicit IP address and port. This value overrides Docker address discovery.
 
-Bifrost lists running containers when it starts. It also lists them every 30 seconds. Docker events cause an earlier update.
+Containers are listed at startup and every 30 seconds; Docker events trigger an earlier update.
 
-The Docker socket gives root-level control of the host. A read-only file mount does not make the Docker API read-only.
+The Docker socket grants root-level control of the host, and a read-only file mount does not make the API read-only.
 
 ## Configure edge publication
 
-Enable the edge in the home configuration:
+`bifrost edge invite` on the home host and `bifrost edge join <token>` on the edge host write both sides of this, including the shared key. Enrolling that way is preferred; the fields below are what it produces.
+
+In the home configuration:
 
 ```yaml
 edge:
   enabled: true
-  ipv4_address: 198.51.100.20
+  ipv4_addresses:
+    - 198.51.100.20
   key_file: /etc/bifrost/edge-key
-  max_clock_skew: 30s
-  header_timeout: 250ms
 ```
 
-Replace the documentation address with the public IPv4 address of the edge server.
+`ipv4_address` is the older singular spelling and still works. List every edge that fronts these services: each one publishes an A record for the name, and `check` verifies all of them.
 
-Enable the edge for a service:
+Then enable it per service:
 
 ```yaml
 static_services:
@@ -304,16 +281,14 @@ static_services:
     backend: 127.0.0.1:8096
     listen: 443
     dns: media.example.com
-    mode: splice
-    proxy_protocol: false
     edge: true
 ```
 
-An edge-enabled service must use splice mode in v1. See [the edge guide](../../networking/edge/) for the edge server configuration.
+Mode is coerced to `splice`, because the edge has to reach a Bifrost listener; `mode: direct` is rejected. See [the edge guide](../../networking/edge/).
 
 ### Configure the edge host
 
-The edge host uses a separate configuration file:
+`edge join` writes this file. Its shape, for reference:
 
 ```yaml
 version: 1
@@ -324,7 +299,7 @@ allow:
 key_file: /etc/bifrost/edge-key
 handshake_timeout: 5s
 idle_timeout: 5m
-max_connections: 4096
+max_connections: 1024
 rate_per_minute: 120
 rate_burst: 20
 negative_ttl: 15s
@@ -333,19 +308,19 @@ static_maps:
   "2222": ssh.example.com:22
 ```
 
-| Field | Requirement |
+| Field | Notes |
 |---|---|
-| `version` | Use `1`. |
-| `listen` | Set the TLS routing address and port. |
-| `allow` | List each permitted TLS SNI name. |
-| `key_file` | Set the path to the shared edge key. |
-| `handshake_timeout` | Limit the time to read a TLS ClientHello. |
-| `idle_timeout` | Close an inactive connection after this time. |
-| `max_connections` | Limit all active edge connections. |
-| `rate_per_minute` | Set the sustained connection rate for one source. |
-| `rate_burst` | Set the permitted connection burst for one source. |
-| `negative_ttl` | Cache failed or empty AAAA lookups for this time. |
-| `stale_on_error` | Permit a previous address for this time after a DNS error. |
+| `version` | Must be `1`. |
+| `listen` | The TLS routing address and port. |
+| `allow` | Each permitted TLS SNI name. |
+| `key_file` | Path to the shared edge key. |
+| `handshake_timeout` | Limit on reading a TLS ClientHello. |
+| `idle_timeout` | Close an inactive connection after this. |
+| `max_connections` | Cap on active edge connections. |
+| `rate_per_minute` | Sustained connection rate for one source. |
+| `rate_burst` | Permitted burst for one source. |
+| `negative_ttl` | Cache empty or failed AAAA lookups for this. |
+| `stale_on_error` | Reuse a previous address for this long after a DNS error. |
 | `static_maps` | Map an edge port to one DNS name and home port. |
 
 Each `allow` entry must be a DNS name. Each static map target must contain a DNS name and port. A static map port must not equal the TLS listener port.
@@ -369,3 +344,7 @@ Check the running service:
 ```sh
 sudo bifrost check --config /etc/bifrost/config.yaml
 ```
+
+`check` ends by saying whether anything outside the network confirmed reachability. Add `--require-external` to exit non-zero when nothing did.
+
+Query the running daemon instead of deriving state locally by dropping `--offline` from `bifrost status`; it reads `/status` on `metrics.listen`.

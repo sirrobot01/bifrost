@@ -50,10 +50,14 @@ sha256sum --ignore-missing --check checksums.txt
 - A clean install reaches ready state with the example and documentation.
 - Prefix rotation publishes the new address before it removes the old address.
 - Service removal deletes owned DNS records and preserves foreign records.
-- `bifrost check` reports local listeners, provider ownership, public DNS, host firewall, external reachability, and path MTU findings separately.
+- `bifrost check` reports local listeners, TLS certificates, provider ownership, public DNS, host firewall, external reachability, and path MTU findings separately.
 - Direct mode has no Bifrost listener.
 - Splice mode reports its client-address behavior.
+- A certificate is issued on first start and renewed before expiry, and `tls: off` never touches ACME.
+- Managed firewall mode drops unpublished inbound IPv6, keeps `allow_ports` reachable, and removes its table on stop.
+- `bifrost edge invite` and `bifrost edge join` enrol an edge without hand-written keys.
 - Edge TLS routing and one static port map work from IPv4 through home IPv6.
+- `check` reports reachability as unverified unless something outside the network confirmed it.
 - `SIGTERM` drains connections within `drain_grace`.
 - The systemd service stops cleanly.
 - Metrics stay on loopback and contain no secrets.

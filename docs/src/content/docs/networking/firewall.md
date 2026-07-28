@@ -1,11 +1,11 @@
 ---
 title: Firewall and path MTU
-description: Open narrow IPv6 pinholes and keep essential ICMPv6 traffic working.
+description: Scope inbound IPv6 to the published services and keep essential ICMPv6 working.
 ---
 
-Bifrost can manage the host firewall for you, or stay out of the way and report what it finds. Choose with `firewall.mode`.
+Two firewalls sit in front of a published service. Bifrost can manage the host one. It can ask the router, but cannot insist.
 
-## Let Bifrost manage the policy
+## Managed mode
 
 ```yaml
 firewall:
@@ -14,73 +14,70 @@ firewall:
     - tailscale0
   allow_ports:
     - 22
+  pcp: true
 ```
 
-In managed mode Bifrost owns one nftables table named `bifrost`, and rebuilds it whenever the published services change. The table drops inbound IPv6 except for:
+Bifrost owns one nftables table, `bifrost`, rebuilt whenever the published services change. It drops inbound IPv6 except:
 
-- Established and related traffic, so connections in progress survive every rule change.
-- The loopback interface and every interface in `trusted_interfaces`.
-- Essential ICMPv6, including the types path MTU discovery needs.
-- Each published service, scoped to its own derived address and port. Opening a port for one service does not open it on any other address the host holds.
+- Established and related traffic.
+- Loopback and every interface in `trusted_interfaces`.
+- Essential ICMPv6.
+- Each published service, on its own derived address and port.
 - Every port in `allow_ports`, on all addresses.
 
-Bifrost never flushes the whole ruleset, so Docker, firewalld, and the distribution's own rules are untouched. Because nftables drops a packet when any base chain drops it, the managed table narrows a permissive host even when another table accepts. The reverse is not true: it cannot override another table's drop, which is what advisory mode reports.
+Nothing outside that table is touched, so Docker and the distribution firewall keep their rules.
 
 :::caution
-`allow_ports` is how you keep administering the host. If you reach this machine over IPv6 SSH, put `22` in `allow_ports` before enabling managed mode, or add the interface you administer over to `trusted_interfaces`. Existing sessions survive the change, but new ones are dropped without an allowance. Review `bifrost serve --dry-run`, which prints the exact policy, before starting the service.
+Put `22` in `allow_ports` before enabling this if you administer the host over IPv6. Existing sessions survive; new ones are dropped without an allowance. `bifrost serve --dry-run` prints the exact policy first.
 :::
 
-A clean `systemctl stop` removes the managed table, leaving the host exactly as it was before Bifrost started. A crash leaves the table in place, which fails closed.
+`systemctl stop` removes the table. A crash leaves it in place, which fails closed.
 
-## Manage the policy yourself
+With `pcp: true`, Bifrost also asks the router to permit each published socket, using PCP. This is independent of managed mode, so it also works with `mode: advisory`. Bifrost refreshes each mapping halfway through the lifetime the router grants and releases it before removing the service address. Most routers do not answer; nothing changes when they do not.
 
-Set `firewall.mode: advisory` to have Bifrost only inspect and report. Add each pinhole to the firewall tool that already controls the host.
+## Advisory mode
 
-## Open a service port
+`firewall.mode: advisory` inspects and reports only. Add pinholes to whichever tool owns the host policy.
 
-Permit the configured TCP port for the exact service address. This nftables rule shows the required scope:
+Scope each rule to one service address and port:
 
 ```text
 ip6 daddr 2001:db8:1234:1::10 tcp dport 443 ct state new accept
 ```
 
-Replace the example address. Limit the rule to the correct address, port, interface, and zone.
+Never expose the metrics listener. Bifrost requires it to bind loopback.
 
-Do not expose the metrics listener. Bifrost requires this listener to use a loopback address.
+## Essential ICMPv6
 
-## Permit essential ICMPv6
+IPv6 routers do not fragment in transit; they return Packet Too Big to the sender. Dropping these produces connections that open and then stall on the first large response.
 
-IPv6 routers do not fragment packets in transit. They return Packet Too Big messages to the sender. If a firewall drops these messages, small requests can work while large responses and media streams stop.
+Permit for established traffic:
 
-Permit these ICMPv6 errors for established traffic:
+| Type | Message |
+|---|---|
+| 1 | Destination Unreachable |
+| 2 | Packet Too Big |
+| 3 | Time Exceeded |
+| 4 | Parameter Problem |
 
-- Destination Unreachable, type 1
-- Packet Too Big, type 2
-- Time Exceeded, type 3
-- Parameter Problem, type 4
+Echo Request and Reply (128, 129) help with testing but do not replace types 1 to 4.
 
-Echo Request and Echo Reply, types 128 and 129, help with tests. They do not replace types 1 through 4.
+Neighbor and Router Discovery use types 133 to 137. Permit that link-local traffic on the correct interface only, keeping scope and hop-limit checks.
 
-Router Discovery and Neighbor Discovery use types 133 through 137. Permit this link-local traffic only on the correct interface. Keep the required address scope and hop-limit checks. Add these rules through NetworkManager, systemd-networkd, firewalld, ufw, or the main nftables ruleset.
+## The router
 
-## Open the router firewall
+A host rule does not change the customer-edge router. Many home routers block inbound IPv6; some permit all of it. Managed mode is worth enabling either way, since it is the only policy Bifrost controls.
 
-A host firewall rule does not change the customer-edge router, in either mode. Many home routers block inbound IPv6 traffic even when they do not use NAT, and some permit all of it: managed mode is worth enabling in both cases, because it is the only policy Bifrost can guarantee.
+Create a pinhole for the service address and port. Use a prefix-wide rule only when the router cannot match individual addresses.
 
-Create a router pinhole for the service address and port. Use a narrow delegated-prefix rule only when the router cannot track individual addresses.
+If local checks pass and the external probe fails, the router is the remaining hop.
 
-If local checks pass and an external probe fails, inspect the router firewall. Bifrost cannot change a router that it does not control.
-
-## Check the path MTU
-
-Run:
+## Path MTU
 
 ```sh
 sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
-The command reports the interface MTU and visible ICMPv6 policy. If you configure an external probe, the command also tests inbound reachability and Packet Too Big delivery.
+Reports the interface MTU and visible ICMPv6 policy. An enabled edge tests inbound reachability only; a configured `probe.endpoint` can also test Packet Too Big delivery when it returns a measured path result. See [external probe](../../reference/external-probe/).
 
-An MTU such as 1492 on a PPPoE link is valid when Path MTU Discovery works. Do not lower every interface MTU before you test ICMPv6.
-
-See the [external probe contract](../../reference/external-probe/) for the privacy boundary.
+An MTU of 1492 on PPPoE is fine when Path MTU Discovery works. Test ICMPv6 before lowering MTUs.

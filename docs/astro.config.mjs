@@ -3,6 +3,13 @@ import starlight from '@astrojs/starlight';
 
 export default defineConfig({
   site: 'https://bifrost.biodun.dev',
+  // The per-application pages were merged into one guide. These paths were
+  // published, so they keep resolving rather than 404ing.
+  redirects: {
+    '/applications/jellyfin/': '/guides/applications/',
+    '/applications/immich/': '/guides/applications/',
+    '/applications/plex/': '/guides/applications/',
+  },
   integrations: [
     starlight({
       title: 'Bifrost',
@@ -66,21 +73,16 @@ export default defineConfig({
         },
         {
           label: 'Configure Bifrost',
-          items: [{ slug: 'guides/configuration' }],
+          items: [
+            { slug: 'guides/configuration' },
+            { slug: 'guides/applications' },
+          ],
         },
         {
           label: 'Network',
           items: [
             { slug: 'networking/firewall' },
             { slug: 'networking/edge' },
-          ],
-        },
-        {
-          label: 'Applications',
-          items: [
-            { slug: 'applications/jellyfin' },
-            { slug: 'applications/immich' },
-            { slug: 'applications/plex' },
           ],
         },
         {

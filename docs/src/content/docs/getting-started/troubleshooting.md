@@ -8,8 +8,8 @@ Two commands produce findings. `bifrost doctor` judges the host and needs no con
 Both accept `--json` for scripts, and both exit non-zero when any finding is an error.
 
 ```sh
-sudo bifrost doctor
-sudo bifrost check --config /etc/bifrost/config.yaml
+sudo bifrost doctor                                     # --probe <url> to test inbound
+sudo bifrost check --config /etc/bifrost/config.yaml    # --require-external to demand proof
 ```
 
 Findings are `INFO`, `WARNING`, or `ERROR`. Only errors block publication. A warning is a condition to understand, not always a fault.
@@ -78,6 +78,12 @@ Add service-scoped accepts to whichever firewall manager owns the policy. A sepa
 
 Essential ICMPv6 error traffic may be blocked. Path MTU discovery needs Destination Unreachable (1), Packet Too Big (2), Time Exceeded (3), and Parameter Problem (4); blocking them produces connections that open and then stall. Add scoped accepts for those types in the firewall manager that owns the policy. See [firewall](../../networking/firewall/).
 
+### `inbound`
+
+The one question no local check can answer: whether the internet can reach this host at all. Without `--probe` it is a warning, because every other finding here observes the host, and a host looks identical whether or not inbound traffic arrives.
+
+`sudo bifrost doctor --probe <url>` binds a temporary listener and asks an outside vantage to reach it. An error means the customer-edge router is dropping inbound traffic; nothing on the host can change that.
+
 ### `docker`
 
 Reported only when you pass `--docker-socket`. Docker socket access grants root-level control of the host. Prefer a restricted socket proxy.
@@ -92,7 +98,7 @@ The derived service address is missing from the host. The service is not running
 
 ### `tls`
 
-The listener's certificate failed the handshake, is close to expiry, or has expired. Issuance and renewal errors appear in the serve log; the usual causes are the provider rejecting the challenge record (check `dns-owner` and the provider credentials) or the CA being unreachable from the host. Renewal runs 30 days before expiry, so any expiry warning means renewals have been failing for a while.
+The listener's certificate failed the handshake, expires within 14 days, or has expired. Issuance and renewal errors appear in the serve log; the usual causes are the provider rejecting the challenge record (check `dns-owner` and the provider credentials) or the CA being unreachable from the host. Renewal starts 30 days before expiry, so an expiry warning means renewals have been failing for at least two weeks. `bifrost_certificate_expiry_seconds` exposes the same signal to monitoring.
 
 ### `listener`
 
@@ -112,15 +118,11 @@ Bifrost marks the records it owns with a TXT record and refuses to modify record
 
 Resolve the conflict at the provider, or publish under a different name. Do not delete the ownership marker while the service is running.
 
-### `inbound`
-
-Only `doctor --probe` produces this. It asks an outside vantage to open a connection to a temporary listener on this host, which is the one question no local check can answer. An error here means the customer-edge router is dropping inbound traffic, and nothing on the host can change that.
-
 ### `external`
 
-The service is not reachable from the configured external probe, while the local address, listener, and host policy are correct. The remaining hop is the router. Confirm its inbound IPv6 rule.
+The service was not reachable from outside, while the local address, listener, and host policy are all correct. The finding names a failed edge when an edge pool is the vantage; every published edge must work. Otherwise the remaining hop is the router, so confirm its inbound IPv6 rule.
 
-Without a configured probe this is a warning: Bifrost cannot otherwise tell router filtering apart from host state. See [external probe](../../reference/external-probe/).
+With no way to look from outside this is a warning instead, and `check` closes by saying that nothing it ran proves internet reachability. An enabled edge serves as the prober automatically; `probe.endpoint` uses an HTTPS service instead. `--require-external` makes the unverified case a non-zero exit, which is what you want in a monitoring job. See [external probe](../../reference/external-probe/).
 
 ### `pmtu`
 

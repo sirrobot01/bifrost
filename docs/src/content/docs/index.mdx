@@ -42,7 +42,7 @@ An optional edge accepts IPv4 traffic on a public server. The edge sends that tr
     Bifrost uses a TXT marker. It does not replace a record that belongs to another owner.
   </Card>
   <Card title="Find network faults" icon="magnifier">
-    The check command tests addresses, listeners, DNS, firewall policy, and an optional external path.
+    The check command tests addresses, certificates, listeners, DNS ownership, firewall policy, and the path from outside.
   </Card>
 </CardGrid>
 
@@ -54,7 +54,7 @@ The home role requires these items:
 - A global IPv6 `/64` on that host
 - Permission to add IPv6 addresses
 - Permission to bind the public TCP ports
-- An inbound rule on the home router
+- An inbound rule on the home router, which managed mode and PCP can sometimes arrange
 - Supported DNS provider credentials
 
 Bifrost cannot open the firewall on an ISP router. Bifrost cannot create an IPv6 path when the ISP does not provide one.

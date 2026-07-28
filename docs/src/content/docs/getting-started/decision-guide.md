@@ -40,9 +40,9 @@ The tools work together. Publish public services with Bifrost. Reach private ser
 
 Use an HTTP CDN or reverse proxy when all services use HTTP and the proxy limits meet your needs.
 
-An HTTP proxy can provide TLS, certificates, authentication, and web filtering. Bifrost does not provide these functions.
+Both terminate TLS and manage certificates. A proxy adds authentication, web filtering, and request-level routing, which Bifrost does not do.
 
-Bifrost is useful for non-HTTP TCP services. It is also useful when direct bandwidth or latency is important.
+Bifrost handles any TCP service, not only HTTP, and keeps the traffic on a direct path where bandwidth or latency matters.
 
 ## Use a basic DDNS client
 
@@ -50,12 +50,12 @@ Use a basic DDNS client when one host address and one DNS record are sufficient.
 
 Use Bifrost when you also need one or more of these functions:
 
-- A separate IPv6 address for each service
-- DNS overlap during a prefix change
-- DNS ownership checks
+- A separate IPv6 address for each service, so several can share port 443
+- Automatic certificates for each published name
+- DNS overlap during a prefix change, and ownership checks on the records
 - Docker service discovery
 - IPv6-to-IPv4 TCP splice mode
-- Firewall and PMTU checks
+- A managed host firewall scoped to the published services
 
 ## Decide if you need the edge
 

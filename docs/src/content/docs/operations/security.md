@@ -14,7 +14,7 @@ Every published backend must provide its own authentication, updates, and rate c
 - The edge key authenticates edge metadata. Do not reuse the DNS credential or address secret as the edge key.
 - Access to the Docker socket is equivalent to root access. A read-only filesystem mount does not limit Docker API methods.
 - `CAP_NET_ADMIN` permits network changes in the current namespace. Use the hardened systemd unit or a restricted container.
-- An external probe receives each tested public address and port. Configure a probe only when you accept its privacy policy.
+- An HTTPS probe endpoint receives each tested public address, port, and published DNS name. Configure one only when you accept its privacy policy. An enabled edge acts as the prober instead, which keeps the question inside infrastructure you run.
 
 ## Keep DNS ownership separate
 
@@ -38,7 +38,7 @@ The edge allowlist limits server-side request forgery. The edge accepts only con
 
 Bifrost has no analytics, crash reporting, or update checks. It does not use an external service by default.
 
-Calls to DNS providers, Docker, and a configured external probe are required product traffic. Logs remain on the host unless the operator forwards them.
+Calls to DNS providers, the ACME certificate authority, Docker, and any configured external probe are required product traffic. Logs remain on the host unless you forward them.
 
 ## Deploy safely
 
@@ -48,4 +48,20 @@ Calls to DNS providers, Docker, and a configured external probe are required pro
 - Run the home and edge roles as separate system users.
 - Apply security updates to the host and applications.
 - Review `serve --dry-run` before the first reconciliation and after configuration changes.
-- Monitor `/healthz`, reconciliation errors, DNS drift, and rejected connections.
+- Monitor the metrics listener, especially certificate expiry and rejected connections.
+
+## Metrics
+
+`metrics.listen` (default `127.0.0.1:9098`) serves `/healthz`, `/status`, and Prometheus metrics at `/metrics`. It must bind loopback.
+
+| Metric | Meaning |
+|---|---|
+| `bifrost_ready` | 1 once reconciliation has succeeded. |
+| `bifrost_services` | Published services. |
+| `bifrost_certificate_expiry_seconds` | Per name, expiry as a Unix timestamp. |
+| `bifrost_connections_active` | Connections currently spliced. |
+| `bifrost_connections_accepted_total` | Accepted connections. |
+| `bifrost_connections_rejected_total` | Rejected connections. |
+| `bifrost_backend_dial_failures_total` | Failures dialling a backend. |
+
+Alert on `bifrost_certificate_expiry_seconds`. Renewal starts 30 days out, so a value inside two weeks means renewals have been failing silently.
