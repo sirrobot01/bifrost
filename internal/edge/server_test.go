@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,7 +129,7 @@ func TestEdgeAdmissionAccountsGlobalSlots(t *testing.T) {
 	server := newAdmissionTestServer(t, func(c *Config) { c.MaxConnections = 1 })
 
 	_, first := dialPair(t)
-	if !server.admitConnection(first) {
+	if _, admitted := server.admitConnection(first); !admitted {
 		t.Fatal("first connection was not admitted")
 	}
 	if got := server.global.Active(); got != 1 {
@@ -135,8 +137,12 @@ func TestEdgeAdmissionAccountsGlobalSlots(t *testing.T) {
 	}
 
 	_, second := dialPair(t)
-	if server.admitConnection(second) {
+	reason, admitted := server.admitConnection(second)
+	if admitted {
 		t.Fatal("second connection was admitted past the global limit")
+	}
+	if !strings.Contains(reason, "connection limit") {
+		t.Fatalf("reason = %q, want it to name the connection limit", reason)
 	}
 	if got := server.global.Active(); got != 1 {
 		t.Fatalf("active = %d after a rejected connection, want 1", got)
@@ -160,15 +166,20 @@ func TestEdgeAdmissionReleasesSlotWhenRateLimited(t *testing.T) {
 	})
 
 	_, first := dialPair(t)
-	if !server.admitConnection(first) {
+	if _, admitted := server.admitConnection(first); !admitted {
 		t.Fatal("first connection was not admitted")
 	}
 	server.global.Release()
 
 	// The same source has spent its burst, so the next attempt is rate limited.
 	_, second := dialPair(t)
-	if server.admitConnection(second) {
+	reason, admitted := server.admitConnection(second)
+	if admitted {
 		t.Fatal("a rate limited source was admitted")
+	}
+	// The reason reaches the log, so a refused operator is not left guessing.
+	if !strings.Contains(reason, "rate limit") {
+		t.Fatalf("reason = %q, want it to name the rate limit", reason)
 	}
 	if got := server.global.Active(); got != 0 {
 		t.Fatalf("active = %d, want the speculatively held slot released", got)
@@ -225,5 +236,71 @@ func TestEdgeServeClosesConnectionsOverTheLimit(t *testing.T) {
 	}
 	if got := server.global.Active(); got != 1 {
 		t.Fatalf("active = %d after shedding, want 1", got)
+	}
+}
+
+// TestEdgeFollowsPrefixChangeAfterDialFailure reproduces a production failure:
+// a home prefix change republished DNS within seconds, but the edge held the
+// withdrawn addresses until the record TTL expired, which was an hour on a
+// provider enforcing a long minimum. Every request failed in the meantime.
+func TestEdgeFollowsPrefixChangeAfterDialFailure(t *testing.T) {
+	t.Parallel()
+
+	oldAddress := netip.MustParseAddr("2001:4860:1::10")
+	newAddress := netip.MustParseAddr("2606:4700:2::20")
+	resolver := &fakeResolver{addresses: []netip.Addr{oldAddress}, ttl: time.Hour}
+
+	keyPath := filepath.Join(t.TempDir(), "edge.key")
+	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{0x42}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configFile := Config{Version: 1, Listen: "127.0.0.1:0", Allow: []string{"media.example.com"}, KeyFile: keyPath}
+	configFile.applyDefaults()
+	server, err := NewServer(configFile, resolver, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Warm the cache with the pre-rotation answer, as a live edge would have.
+	if _, err := server.cache.Lookup(t.Context(), "media.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The prefix rotates: DNS now serves the new address, but the cache is
+	// pinned to the old one for an hour.
+	resolver.addresses = []netip.Addr{newAddress}
+
+	var dialled []netip.Addr
+	server.dialHome = func(_ context.Context, addresses []netip.Addr, _ uint16) (net.Conn, error) {
+		dialled = append(dialled, addresses...)
+		if addresses[0] == newAddress {
+			client, _ := net.Pipe()
+			return client, nil
+		}
+		return nil, errors.New("no route to host")
+	}
+
+	addresses, err := server.cache.Lookup(t.Context(), "media.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addresses[0] != oldAddress {
+		t.Fatalf("cache did not hold the stale answer, so the test proves nothing")
+	}
+	if _, err := server.dialHome(t.Context(), addresses, 443); err == nil {
+		t.Fatal("the stale address dialled successfully")
+	}
+	// This is the fix: a failed dial drops the entry so the next lookup sees
+	// the republished record instead of waiting out the TTL.
+	server.cache.Invalidate("media.example.com")
+	retried, err := server.cache.Lookup(t.Context(), "media.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried[0] != newAddress {
+		t.Fatalf("after invalidation the cache returned %v, want the republished %v", retried, newAddress)
+	}
+	if _, err := server.dialHome(t.Context(), retried, 443); err != nil {
+		t.Fatalf("dialling the republished address failed: %v", err)
 	}
 }

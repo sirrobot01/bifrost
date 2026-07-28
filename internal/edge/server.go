@@ -18,14 +18,19 @@ import (
 )
 
 type Server struct {
-	config   Config
-	key      []byte
-	cache    *DNSCache
-	allowed  map[string]struct{}
-	global   *exposure.Limiter
-	rate     *sourceRateLimiter
-	logger   *slog.Logger
-	dialHome func(context.Context, []netip.Addr, uint16) (net.Conn, error)
+	config  Config
+	key     []byte
+	cache   *DNSCache
+	allowed map[string]struct{}
+	global  *exposure.Limiter
+	rate    *sourceRateLimiter
+	// refusal state throttles the log line for connections turned away on the
+	// accept path, which is the expected behaviour under a flood.
+	refusalMu       sync.Mutex
+	refusalCount    int
+	refusalLoggedAt time.Time
+	logger          *slog.Logger
+	dialHome        func(context.Context, []netip.Addr, uint16) (net.Conn, error)
 }
 
 type route struct {
@@ -147,7 +152,11 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, listenerRoute
 			}
 			return err
 		}
-		if !s.admitConnection(connection) {
+		if reason, admitted := s.admitConnection(connection); !admitted {
+			// A dropped connection is invisible to the client and used to be
+			// invisible here too, which left an operator with a dead edge and
+			// an empty log. Report it, but not once per packet in a flood.
+			s.reportRefusal(reason, connection.RemoteAddr())
 			_ = connection.Close()
 			continue
 		}
@@ -162,19 +171,41 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, listenerRoute
 // before a connection is given a goroutine. Shedding here rather than inside the
 // handler keeps a flood from scheduling the very work needed to turn it away.
 // The caller owns a global slot once this reports true and must release it.
-func (s *Server) admitConnection(client net.Conn) bool {
+func (s *Server) admitConnection(client net.Conn) (string, bool) {
 	remote, ok := client.RemoteAddr().(*net.TCPAddr)
 	if !ok {
-		return false
+		return "the peer address is not TCP", false
 	}
 	if !s.global.Acquire() {
-		return false
+		return "the global connection limit is reached", false
 	}
 	if !s.rate.Allow(remote.AddrPort().Addr()) {
 		s.global.Release()
-		return false
+		return "the per-source rate limit is reached", false
 	}
-	return true
+	return "", true
+}
+
+// refusalLogInterval bounds how often refusals are logged. A flood is the
+// expected reason to refuse, so logging every one would turn the limiter into
+// an amplifier against the operator's disk.
+const refusalLogInterval = 10 * time.Second
+
+// reportRefusal logs at most one refusal per interval, with the number
+// suppressed since the last line so a flood is still visible in its size.
+func (s *Server) reportRefusal(reason string, remote net.Addr) {
+	s.refusalMu.Lock()
+	s.refusalCount++
+	count := s.refusalCount
+	now := time.Now()
+	if now.Sub(s.refusalLoggedAt) < refusalLogInterval {
+		s.refusalMu.Unlock()
+		return
+	}
+	s.refusalLoggedAt = now
+	s.refusalCount = 0
+	s.refusalMu.Unlock()
+	s.logger.Warn("edge refused connections", "reason", reason, "client", remote.String(), "refused_since_last_report", count)
 }
 
 func (s *Server) handle(ctx context.Context, client net.Conn, listenerRoute route) {
@@ -191,7 +222,9 @@ func (s *Server) handle(ctx context.Context, client net.Conn, listenerRoute rout
 		var err error
 		initial, host, err = readClientHello(client, s.config.HandshakeTimeout.Duration())
 		if err != nil {
-			s.logger.Debug("edge ClientHello rejected", "client", remote, "error", err)
+			// This ends the connection, so it belongs at the same level as
+			// every other terminating failure rather than hidden at debug.
+			s.logger.Warn("edge ClientHello rejected", "client", remote, "error", err)
 			return
 		}
 		if _, allowed := s.allowed[host]; !allowed {
@@ -207,8 +240,19 @@ func (s *Server) handle(ctx context.Context, client net.Conn, listenerRoute rout
 	}
 	backend, err := s.dialHome(ctx, addresses, listenerRoute.port)
 	if err != nil {
-		s.logger.Warn("edge home dial failed", "host", host, "error", err)
-		return
+		// Every cached address failed. The usual cause is a home prefix
+		// change: the records already carry the new addresses, but this entry
+		// is pinned until its TTL. Drop it and resolve again so the next
+		// request follows the move instead of waiting out the TTL.
+		s.cache.Invalidate(host)
+		if retryAddresses, retryErr := s.cache.Lookup(ctx, host); retryErr == nil && !sameAddresses(retryAddresses, addresses) {
+			s.logger.Info("edge re-resolved after a dial failure", "host", host, "addresses", retryAddresses)
+			backend, err = s.dialHome(ctx, retryAddresses, listenerRoute.port)
+		}
+		if err != nil {
+			s.logger.Warn("edge home dial failed", "host", host, "error", err)
+			return
+		}
 	}
 	defer func() { _ = backend.Close() }()
 
@@ -442,4 +486,18 @@ func (l *sourceRateLimiter) unlink(bucket *sourceBucket) {
 	}
 	bucket.newer = nil
 	bucket.older = nil
+}
+
+// sameAddresses reports whether two resolved sets are equal, so a re-resolve
+// that returns the same dead answers is not retried pointlessly.
+func sameAddresses(left, right []netip.Addr) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }

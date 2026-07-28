@@ -54,6 +54,17 @@ func NewDNSCache(resolver Resolver, negativeTTL, stale time.Duration) (*DNSCache
 	return &DNSCache{resolver: resolver, negativeTTL: negativeTTL, stale: stale, now: time.Now, entries: make(map[string]cacheEntry)}, nil
 }
 
+// Invalidate drops the cached answer for name so the next lookup resolves
+// again. The edge calls this when it cannot reach a cached address: a home
+// prefix change republishes DNS within seconds, but a cached answer would
+// otherwise keep the edge dialling withdrawn addresses until the record TTL
+// expired, which is an hour on providers that enforce a long minimum.
+func (c *DNSCache) Invalidate(name string) {
+	c.mu.Lock()
+	delete(c.entries, name)
+	c.mu.Unlock()
+}
+
 func (c *DNSCache) Lookup(ctx context.Context, name string) ([]netip.Addr, error) {
 	now := c.now()
 	c.mu.Lock()
