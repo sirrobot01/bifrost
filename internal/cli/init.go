@@ -115,20 +115,22 @@ func (r Runner) runInitInteractive(ctx context.Context, configDir, interfaceName
 	_ = prompt.say("Run bifrost doctor first if you have not confirmed this host has usable IPv6.")
 	_ = prompt.say("")
 
+	// Only ask about the interface when the host is ambiguous. A question with
+	// one possible answer is ceremony, and this one has a right answer on
+	// almost every machine.
 	if interfaceName == "" {
 		discovered, err := discoverInterface()
 		if err != nil {
 			_ = prompt.say("Could not pick an interface automatically: %v", err)
+			answer, promptErr := prompt.required("Publication interface", "")
+			if promptErr != nil {
+				return promptErr
+			}
+			interfaceName = answer
+		} else {
+			interfaceName = discovered
+			_ = prompt.say("Publishing from %s.", interfaceName)
 		}
-		answer, err := prompt.required("Publication interface", discovered)
-		if err != nil {
-			return err
-		}
-		interfaceName = answer
-	}
-	configDir, err := prompt.required("Configuration directory", configDir)
-	if err != nil {
-		return err
 	}
 	configPath := filepath.Join(configDir, "config.yaml")
 	secretPath := filepath.Join(configDir, "address-secret")
@@ -208,11 +210,11 @@ func (r Runner) runInitInteractive(ctx context.Context, configDir, interfaceName
 	return writeInitNextSteps(prompt, configPath, service, owned)
 }
 
+// promptService asks only for what cannot be worked out. The service name
+// comes from the DNS name, the public port is the one browsers use, and auto
+// mode picks the exposure that fits the backend. Each derived value is shown
+// rather than asked about, so the operator can still see what was chosen.
 func promptService(prompt *prompter) (config.StaticService, error) {
-	name, err := prompt.required("Service name", "myservice")
-	if err != nil {
-		return config.StaticService{}, err
-	}
 	dnsName, err := prompt.required("Public DNS name (for example media.example.com)", "")
 	if err != nil {
 		return config.StaticService{}, err
@@ -221,33 +223,13 @@ func promptService(prompt *prompter) (config.StaticService, error) {
 	if err != nil {
 		return config.StaticService{}, err
 	}
-	listen, err := prompt.port("Public port clients connect to", 443)
-	if err != nil {
-		return config.StaticService{}, err
+	name := serviceNameFromDNS(dnsName)
+	const listen uint16 = 443
+	mode := "auto"
+	_ = prompt.say("  service %q, published on port %d, mode %s", name, listen, mode)
+	if !(backend.Addr().Is6() && !backend.Addr().IsPrivate()) {
+		_ = prompt.say("  Bifrost will terminate TLS and forward to the backend")
 	}
-
-	// Direct mode publishes the backend's own address, so it is only offered
-	// when the backend could actually hold a public IPv6 address. Offering it
-	// for an IPv4 backend would only produce a configuration that fails
-	// validation after every other question has been answered.
-	modes := []string{"auto", "splice"}
-	if backend.Addr().Is6() && !backend.Addr().IsPrivate() {
-		modes = []string{"auto", "direct", "splice"}
-	} else {
-		_ = prompt.say("  direct mode is unavailable: it needs the backend to own the public IPv6 address")
-	}
-	mode, err := prompt.choice("Service mode", modes, "auto")
-	if err != nil {
-		return config.StaticService{}, err
-	}
-	if mode == "direct" && backend.Port() != listen {
-		_ = prompt.say("  direct mode cannot translate ports, so the public port must match the backend port")
-		listen, err = prompt.port("Public port clients connect to", backend.Port())
-		if err != nil {
-			return config.StaticService{}, err
-		}
-	}
-
 	return config.StaticService{
 		Name:    name,
 		Backend: backend.String(),
@@ -392,6 +374,8 @@ func writeInitNextSteps(prompt *prompter, configPath string, service config.Stat
 	}
 	_ = prompt.say("")
 	_ = prompt.say("Your router must permit inbound IPv6 TCP %d to this host before %s answers.", service.Listen, service.DNSName)
+	_ = prompt.say("Set firewall.mode to managed in the configuration to have Bifrost scope inbound")
+	_ = prompt.say("IPv6 to the published services, and firewall.pcp to ask the router itself.")
 	_ = prompt.say("")
 	_ = prompt.say("Next:")
 	_ = prompt.say("  sudo bifrost serve --config %s --dry-run   # review the planned changes", configPath)
@@ -503,4 +487,21 @@ func guessZone(dnsName string) string {
 		return dnsName
 	}
 	return strings.Join(labels[len(labels)-depth:], ".")
+}
+
+// serviceNameFromDNS derives the service identity from the name being
+// published. The first label is what an operator calls the service anyway, so
+// asking for it separately invites a mismatch between the two.
+func serviceNameFromDNS(dnsName string) string {
+	label, _, _ := strings.Cut(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(dnsName)), "."), ".")
+	sanitized := make([]rune, 0, len(label))
+	for _, character := range label {
+		if character == '-' || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
+			sanitized = append(sanitized, character)
+		}
+	}
+	if len(sanitized) == 0 {
+		return "service"
+	}
+	return string(sanitized)
 }

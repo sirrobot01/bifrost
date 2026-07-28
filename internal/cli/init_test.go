@@ -46,13 +46,12 @@ func TestRunnerInitInteractiveCreatesEveryFile(t *testing.T) {
 	t.Parallel()
 
 	configDir := filepath.Join(t.TempDir(), "bifrost")
+	// Only what cannot be derived is asked. The service name comes from the
+	// DNS name, the public port is 443, the mode is auto, and the zone comes
+	// from the provider account.
 	stdin := answerFile(t,
-		configDir,           // configuration directory
-		"media",             // service name
 		"media.example.com", // public DNS name
 		"127.0.0.1:8096",    // backend
-		"443",               // public port
-		"auto",              // mode
 		"desec",             // DNS provider
 		"desec-token-value", // token
 		"",                  // zone: accept the discovered default
@@ -112,15 +111,11 @@ func TestRunnerInitInteractiveWritesNothingWhenDeclined(t *testing.T) {
 
 	configDir := filepath.Join(t.TempDir(), "bifrost")
 	stdin := answerFile(t,
-		configDir,
-		"media",
 		"media.example.com",
 		"127.0.0.1:8096",
-		"443",
-		"auto",
 		"desec",
-		"example.com",
 		"desec-token-value",
+		"example.com",
 		"n", // decline
 	)
 
@@ -131,31 +126,6 @@ func TestRunnerInitInteractiveWritesNothingWhenDeclined(t *testing.T) {
 	}
 	if _, err := os.Stat(configDir); !os.IsNotExist(err) {
 		t.Fatalf("declining still created %s", configDir)
-	}
-}
-
-func TestRunnerInitInteractiveRejectsDirectModeForIPv4Backend(t *testing.T) {
-	t.Parallel()
-
-	configDir := filepath.Join(t.TempDir(), "bifrost")
-	stdin := answerFile(t,
-		configDir,
-		"media",
-		"media.example.com",
-		"127.0.0.1:8096",
-		"443",
-		"direct", // not offered for an IPv4 backend
-		"direct",
-		"direct",
-	)
-
-	var stdout, stderr bytes.Buffer
-	runner := Runner{Stdout: &stdout, Stderr: &stderr, Stdin: stdin, Version: "test"}
-	if code := runner.Run(t.Context(), []string{"init", "--interactive", "--interface", "lo", "--config-dir", configDir}); code == 0 {
-		t.Fatal("init accepted direct mode for an IPv4 backend")
-	}
-	if !strings.Contains(stdout.String(), "direct mode is unavailable") {
-		t.Fatalf("stdout = %s", stdout.String())
 	}
 }
 

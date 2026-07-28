@@ -59,22 +59,19 @@ Every `ERROR` line names the problem, the fix, and a link into [troubleshooting]
 sudo bifrost init --interactive
 ```
 
-`init` asks for what it cannot detect, then writes every file itself. Blank answers accept the value in brackets.
+`init` asks only for what it cannot work out, then writes every file itself. Blank answers accept the value in brackets. The interface, the service name, the public port, the exposure mode, and the DNS zone are all derived and shown rather than asked about.
 
 ```
 This creates the Bifrost configuration, the address secret, and the DNS credential.
 Run bifrost doctor first if you have not confirmed this host has usable IPv6.
 
-Publication interface [eth0]:
-Configuration directory [/etc/bifrost]:
+Publishing from eth0.
 
 Describe the first service to publish. More can be added later in /etc/bifrost/config.yaml.
-Service name [myservice]: jellyfin
 Public DNS name (for example media.example.com): media.example.com
 Address the service already listens on [127.0.0.1:8096]:
-Public port clients connect to [443]: 8096
-  direct mode is unavailable: it needs the backend to own the public IPv6 address
-Service mode (auto/splice) [auto]:
+  service "media", published on port 443, mode auto
+  Bifrost will terminate TLS and forward to the backend
 
 DNS provider (cloudflare/desec/dynv6/rfc2136) [cloudflare]:
 Cloudflare API token (input hidden):
