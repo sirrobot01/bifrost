@@ -19,33 +19,45 @@ The edge host needs these network paths:
 - Public inbound IPv4
 - Outbound IPv6 to the home service
 
-Create a shared key with at least 32 bytes:
+Install Bifrost on it the same way as at home:
 
 ```sh
-umask 077
-openssl rand -hex 32 > edge-key
-sudo install -o bifrost-edge -g bifrost-edge -m 0600 edge-key /etc/bifrost/edge-key
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-Install the same file at `/etc/bifrost/edge-key` on the home host. Set its owner to `bifrost` and its mode to `0600`. Do not put the key in chat, shell history, or a repository.
+## Enrol the edge
+
+Both hosts need the same shared key, and the edge needs the list of names it may serve. One token carries both.
+
+On the **home** host:
+
+```sh
+sudo bifrost edge invite --address 203.0.113.10
+```
+
+That creates the shared key if it does not exist, and prints a token along with the configuration block to add. Reusing the command later prints the same key, so an already-enrolled edge keeps working.
+
+On the **edge** host, paste the token:
+
+```sh
+sudo bifrost edge join bfe1.eyJrIjoi...
+```
+
+`join` writes `/etc/bifrost/edge-key` and `/etc/bifrost/edge.yaml` with the allowlist from the token, sets their ownership and modes, and starts the service. Pass `--start=false` to write the files without starting it.
+
+The token contains the shared key. Send it over a private channel, and keep it out of chat, shell history, and repositories.
 
 ## Configure the home host
 
-Add the global `edge` block. Set `edge: true` on each splice service that must accept edge traffic.
+Add the `edge` block that `invite` printed, and set `edge: true` on each service the edge should serve. Those services use splice mode automatically, because the edge connects to a Bifrost listener and direct mode creates none.
 
 The home daemon publishes the edge IPv4 address only after it owns the DNS name. The edge does not update DNS.
 
-## Configure the edge service
-
-Add every permitted TLS name to `allow`. Then install the example configuration and systemd unit:
+Restart the home daemon to publish the A records:
 
 ```sh
-sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin bifrost-edge
-sudo install -d -o bifrost-edge -g bifrost-edge -m 0750 /etc/bifrost
-sudo install -o bifrost-edge -g bifrost-edge -m 0600 configs/edge.example.yaml /etc/bifrost/edge.yaml
-sudo install -m 0644 deploy/bifrost-edge.service /etc/systemd/system/bifrost-edge.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now bifrost-edge
+sudo systemctl restart bifrost
+sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
 ## Route TLS traffic

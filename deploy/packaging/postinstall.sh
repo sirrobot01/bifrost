@@ -5,7 +5,10 @@
 # after reviewing a dry run.
 set -e
 
-install -d -o bifrost -g bifrost -m 0750 /etc/bifrost
+# The directory is traversable so the bifrost-edge account can reach its own
+# configuration on an edge host. Secrets are protected by their own 0600 modes,
+# which Bifrost verifies before reading them.
+install -d -o bifrost -g bifrost -m 0755 /etc/bifrost
 
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true

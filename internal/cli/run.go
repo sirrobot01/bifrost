@@ -78,6 +78,16 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 }
 
 func (r Runner) runEdge(ctx context.Context, arguments []string) error {
+	// Enrollment subcommands come before the server flags so that `edge join`
+	// reads as a verb rather than an argument to the server.
+	if len(arguments) > 0 {
+		switch arguments[0] {
+		case "invite":
+			return r.runEdgeInvite(arguments[1:])
+		case "join":
+			return r.runEdgeJoin(arguments[1:])
+		}
+	}
 	flags := flag.NewFlagSet("edge", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
 	configPath := flags.String("config", "/etc/bifrost/edge.yaml", "edge config file")
@@ -308,6 +318,8 @@ func (r Runner) usage() {
 	_, _ = fmt.Fprintln(r.Stderr, "  check    diagnose a configured deployment end to end")
 	_, _ = fmt.Fprintln(r.Stderr, "  serve    run the home publication daemon")
 	_, _ = fmt.Fprintln(r.Stderr, "  edge     run the optional IPv4 edge")
+	_, _ = fmt.Fprintln(r.Stderr, "           edge invite   print one token enrolling an edge host (run at home)")
+	_, _ = fmt.Fprintln(r.Stderr, "           edge join     configure this host from a token (run on the edge)")
 	_, _ = fmt.Fprintln(r.Stderr, "  status   show desired or running state")
 	_, _ = fmt.Fprintln(r.Stderr, "  version  print the build version")
 }

@@ -64,9 +64,10 @@ jobs:
           test -f /lib/systemd/system/bifrost.service.d/10-package-path.conf
           getent passwd bifrost
           getent passwd bifrost-edge
-          # The address secret and DNS credentials live here, so the directory
-          # must not be group or world readable.
-          test "$(stat -c '%U:%G:%a' /etc/bifrost)" = "bifrost:bifrost:750"
+          # Traversable so the bifrost-edge account reaches its own config on
+          # an edge host. The address secret and DNS credentials inside carry
+          # their own 0600 modes, which Bifrost verifies before reading them.
+          test "$(stat -c '%U:%G:%a' /etc/bifrost)" = "bifrost:bifrost:755"
           systemd-analyze verify /lib/systemd/system/bifrost.service
           bifrost version
       - name: Verify doctor runs without a configuration

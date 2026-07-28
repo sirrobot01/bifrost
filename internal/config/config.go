@@ -187,6 +187,11 @@ func (c *Config) ApplyDefaults() {
 		if c.StaticServices[index].Mode == "" {
 			c.StaticServices[index].Mode = "auto"
 		}
+		// An edge service must terminate on a Bifrost listener, so auto has
+		// only one valid answer. Choosing it beats rejecting the config.
+		if c.StaticServices[index].Edge && c.StaticServices[index].Mode == "auto" {
+			c.StaticServices[index].Mode = "splice"
+		}
 		if c.StaticServices[index].TLS == "" {
 			c.StaticServices[index].TLS = "auto"
 		}
@@ -418,7 +423,9 @@ func (s StaticService) Validate() error {
 		}
 	}
 	if s.Edge && s.Mode != "splice" {
-		return errors.New("edge-enabled services must use splice mode in v1")
+		// ApplyDefaults selects splice for an edge service in auto mode, so
+		// reaching here means direct was requested explicitly.
+		return errors.New("edge-enabled services must use splice mode: the edge connects to a Bifrost listener, which direct mode does not create")
 	}
 	if s.PublicAddress != "" {
 		address, err := netip.ParseAddr(s.PublicAddress)
