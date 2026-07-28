@@ -168,7 +168,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	}
 	services := make([]diagnose.Service, 0, len(resolved.Services))
 	for _, service := range resolved.Services {
-		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true, ClientIPPreserved: service.ClientIPPreserved, TLS: service.TerminatesTLS})
+		services = append(services, diagnose.Service{Name: service.Name, DNSName: service.DNSName, Address: service.Address, Port: service.Listen, CheckLocal: true, ClientIPPreserved: service.ClientIPPreserved, TLS: service.TerminatesTLS, EdgeAddresses: service.EdgeAddresses})
 	}
 	if len(services) == 0 {
 		return 0, errors.New("config has no services to check")
@@ -191,11 +191,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 			return 0, err
 		}
 		for _, service := range resolved.Services {
-			var edgeAddresses []netip.Addr
-			if service.EdgeAddress.IsValid() {
-				edgeAddresses = []netip.Addr{service.EdgeAddress}
-			}
-			err := reconciler.Verify(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: []netip.Addr{service.Address}, EdgeAddresses: edgeAddresses, TTL: configFile.DNS.TTL.Duration()})
+			err := reconciler.Verify(ctx, dnspublish.Publication{Name: service.DNSName, Addresses: []netip.Addr{service.Address}, EdgeAddresses: service.EdgeAddresses, TTL: configFile.DNS.TTL.Duration()})
 			if err != nil {
 				report.Findings = append(report.Findings, diagnose.Finding{Check: "dns-owner", Severity: diagnose.SeverityError, Service: service.Name, Summary: "provider DNS state or ownership is incorrect", Detail: err.Error(), Remediation: "run bifrost serve --dry-run, then reconcile only after reviewing the planned DNS changes"})
 			} else {
@@ -218,7 +214,7 @@ func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 		return 1, nil
 	}
 	if *requireExternal && report.Verification != diagnose.VerificationExternal {
-		_, _ = fmt.Fprintln(r.Stderr, "bifrost check: --require-external was set but nothing outside this host confirmed reachability")
+		_, _ = fmt.Fprintln(r.Stderr, "bifrost check: --require-external was set but not every service was confirmed from outside this host")
 		return 1, nil
 	}
 	return 0, nil
@@ -233,12 +229,12 @@ func externalProber(configFile config.Config) (diagnose.ExternalProber, error) {
 	if configFile.Probe.Endpoint != "" {
 		return diagnose.NewHTTPProber(configFile.Probe.Endpoint, nil)
 	}
-	if configFile.Edge.Enabled && configFile.Edge.IPv4Address != "" {
-		address, err := netip.ParseAddr(configFile.Edge.IPv4Address)
+	if configFile.Edge.Enabled && len(configFile.Edge.IPv4Addresses) > 0 {
+		addresses, err := edgeIPv4Addresses(configFile)
 		if err != nil {
-			return nil, fmt.Errorf("edge.ipv4_address: %w", err)
+			return nil, err
 		}
-		return diagnose.NewEdgeProber(address), nil
+		return diagnose.NewEdgeProber(addresses...), nil
 	}
 	return nil, nil
 }
@@ -285,8 +281,12 @@ func (r Runner) runStatus(ctx context.Context, arguments []string) error {
 	}
 	for _, service := range status.Services {
 		edge := "disabled"
-		if service.EdgeAddress.IsValid() {
-			edge = service.EdgeAddress.String()
+		if len(service.EdgeAddresses) > 0 {
+			parts := make([]string, 0, len(service.EdgeAddresses))
+			for _, address := range service.EdgeAddresses {
+				parts = append(parts, address.String())
+			}
+			edge = strings.Join(parts, ",")
 		}
 		if _, err := fmt.Fprintf(r.Stdout, "%s: %s [%s]:%d -> %s, edge: %s, client IP preserved: %t\n", service.Name, service.Mode, service.Address, service.Listen, service.Backend, edge, service.ClientIPPreserved); err != nil {
 			return err

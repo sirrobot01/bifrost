@@ -18,7 +18,7 @@ type resolvedService struct {
 	Address           netip.Addr     `json:"address"`
 	Listen            uint16         `json:"listen"`
 	Backend           netip.AddrPort `json:"backend"`
-	EdgeAddress       netip.Addr     `json:"edge_address,omitempty"`
+	EdgeAddresses     []netip.Addr   `json:"edge_addresses,omitempty"`
 	ClientIPPreserved bool           `json:"client_ip_preserved"`
 	TerminatesTLS     bool           `json:"terminates_tls"`
 }
@@ -103,9 +103,15 @@ func resolve(configFile config.Config) (resolution, error) {
 				return resolution{}, fmt.Errorf("select direct address for %s: %w", service.Name, err)
 			}
 		}
-		var edgeAddress netip.Addr
+		// Every configured edge publishes an A record for the service, so the
+		// resolution has to carry all of them: verifying one would report the
+		// others as unexpected records.
+		var edgeAddresses []netip.Addr
 		if service.Edge {
-			edgeAddress = netip.MustParseAddr(configFile.Edge.IPv4Address)
+			edgeAddresses, err = edgeIPv4Addresses(configFile)
+			if err != nil {
+				return resolution{}, fmt.Errorf("resolve edge addresses for %s: %w", service.Name, err)
+			}
 		}
 		result.Services = append(result.Services, resolvedService{
 			Name:              service.Name,
@@ -114,7 +120,7 @@ func resolve(configFile config.Config) (resolution, error) {
 			Address:           address,
 			Listen:            service.Listen,
 			Backend:           backend,
-			EdgeAddress:       edgeAddress,
+			EdgeAddresses:     edgeAddresses,
 			ClientIPPreserved: mode == "direct" || service.ProxyProtocol,
 			TerminatesTLS:     mode != "direct" && service.TerminatesTLS(),
 		})
@@ -157,4 +163,19 @@ func observedAddress(snapshot netwatch.Snapshot, selection serviceaddr.Selection
 	}
 	slices.SortFunc(addresses, netip.Addr.Compare)
 	return addresses[0], nil
+}
+
+// edgeIPv4Addresses parses every configured edge address. ApplyDefaults folds
+// the singular ipv4_address into the list, so reading the list alone covers a
+// configuration written either way.
+func edgeIPv4Addresses(configFile config.Config) ([]netip.Addr, error) {
+	addresses := make([]netip.Addr, 0, len(configFile.Edge.IPv4Addresses))
+	for _, raw := range configFile.Edge.IPv4Addresses {
+		address, err := netip.ParseAddr(raw)
+		if err != nil {
+			return nil, fmt.Errorf("edge.ipv4_addresses %q: %w", raw, err)
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses, nil
 }
