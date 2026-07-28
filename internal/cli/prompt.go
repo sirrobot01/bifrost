@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -111,22 +110,6 @@ func (p *prompter) addrPort(question, fallback string) (netip.AddrPort, error) {
 		p.reject("answer must be an IP address and port, for example 127.0.0.1:8096")
 	}
 	return netip.AddrPort{}, fmt.Errorf("no valid answer for %q", question)
-}
-
-// port re-asks until the answer is a usable TCP port.
-func (p *prompter) port(question string, fallback uint16) (uint16, error) {
-	for range promptAttempts {
-		answer, err := p.ask(question, strconv.Itoa(int(fallback)))
-		if err != nil {
-			return 0, err
-		}
-		parsed, parseErr := strconv.ParseUint(answer, 10, 16)
-		if parseErr == nil && parsed != 0 {
-			return uint16(parsed), nil
-		}
-		p.reject("answer must be a port between 1 and 65535")
-	}
-	return 0, fmt.Errorf("no valid answer for %q", question)
 }
 
 // confirm asks a yes or no question.

@@ -88,8 +88,8 @@ func (c *Client) Request(ctx context.Context, mapping Mapping) (time.Duration, e
 	if mapping.Port == 0 {
 		return 0, errors.New("a mapping needs a port")
 	}
-	lifetimeSeconds := mapping.Lifetime / time.Second
-	if mapping.Lifetime < 0 || lifetimeSeconds > time.Duration(^uint32(0)) {
+	// PCP carries the lifetime in a 32-bit seconds field.
+	if mapping.Lifetime < 0 || mapping.Lifetime/time.Second > time.Duration(^uint32(0)) {
 		return 0, errors.New("mapping lifetime is outside PCP's 32-bit seconds range")
 	}
 

@@ -227,7 +227,7 @@ func promptService(prompt *prompter) (config.StaticService, error) {
 	const listen uint16 = 443
 	mode := "auto"
 	_ = prompt.say("  service %q, published on port %d, mode %s", name, listen, mode)
-	if !(backend.Addr().Is6() && !backend.Addr().IsPrivate()) {
+	if !backend.Addr().Is6() || backend.Addr().IsPrivate() {
 		_ = prompt.say("  Bifrost will terminate TLS and forward to the backend")
 	}
 	return config.StaticService{

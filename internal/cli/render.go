@@ -301,9 +301,10 @@ func writeCheckSummary(writer io.Writer, report diagnose.Report) error {
 	}
 
 	scope := "Every local check passed"
-	if report.Verification == diagnose.VerificationExternal {
+	switch report.Verification {
+	case diagnose.VerificationExternal:
 		scope = "Every check passed, and the services answered from outside this network"
-	} else if report.Verification == diagnose.VerificationPartial {
+	case diagnose.VerificationPartial:
 		scope = "Local checks passed, and some services answered from outside this network"
 	}
 	summary := "\n" + scope
