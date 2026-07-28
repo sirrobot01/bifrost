@@ -91,7 +91,9 @@ The Cloudflare token needs `Zone:Read` and `DNS:Edit` on the zone that serves yo
 
 Nothing is written until you answer the last question.
 
-The public port is 8096, matching Jellyfin's own port so the URL stays predictable. Bifrost terminates TLS on the listener with an automatically issued certificate for `media.example.com`, so clients connect with `https://` even though Jellyfin itself speaks plain HTTP. A backend that handles TLS itself, such as Plex, sets `tls: off` and passes raw TCP through.
+The public port is 443, so the name works in a browser without one. Bifrost terminates TLS there with an automatically issued certificate for `media.example.com`, even though Jellyfin itself speaks plain HTTP on 8096 behind it. A backend that handles TLS itself, such as Plex, sets `tls: off` in its service block and gets raw TCP passthrough instead.
+
+Each service gets its own IPv6 address, so several services can share port 443 without a reverse proxy to tell them apart.
 
 ## 4. Settle the firewall
 
@@ -108,7 +110,7 @@ firewall:
 
 This matters even when a router already blocks inbound traffic, and it matters most when the router does not: some routers permit all inbound IPv6, which leaves every listening port on the host reachable from the internet until something on the host filters it. See [firewall](../../networking/firewall/).
 
-**The router.** Bifrost cannot configure this one, and on a router that blocks inbound IPv6 the published name will not answer until you do. Add an inbound rule permitting TCP 8096 to the address Bifrost publishes; the setting is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host. Also permit ICMPv6 types 1 to 4, since blocking them breaks path MTU discovery and produces connections that open and then stall.
+**The router.** Bifrost can ask, but cannot insist. Add `pcp: true` under `firewall:` and it will request the pinhole through PCP; most routers do not answer, and the request costs nothing when they do not. On a router that blocks inbound IPv6 and ignores PCP, the published name will not answer until you add the rule yourself. Add an inbound rule permitting TCP 443 to the address Bifrost publishes; the setting is usually under IPv6 firewall, pinholes, or port control. Permit the port, not the whole host. Also permit ICMPv6 types 1 to 4, since blocking them breaks path MTU discovery and produces connections that open and then stall.
 
 ## 5. Review the plan, then start
 
@@ -135,7 +137,7 @@ sudo bifrost check --config /etc/bifrost/config.yaml
 From an IPv6 client elsewhere:
 
 ```sh
-curl -6 -sI https://media.example.com:8096/
+curl -6 -sI https://media.example.com/
 ```
 
 The URL uses `https` because Bifrost terminates TLS on the listener with a certificate for the published name; Jellyfin itself keeps speaking plain HTTP behind it.
