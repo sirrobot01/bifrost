@@ -1,9 +1,11 @@
 package home
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"net/netip"
 	"slices"
 	"strings"
@@ -448,4 +450,43 @@ func TestControllerRequestsRouterPinholes(t *testing.T) {
 	if pinholes.released != 1 {
 		t.Fatalf("released %d times, want 1", pinholes.released)
 	}
+}
+
+// An operator with viewers in several regions puts an edge near each, so every
+// edge address is published for the service rather than only the first.
+func TestControllerPublishesEveryEdgeAddress(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	fixture.controller.config.EdgeVerifier = testEdgeVerifier(t)
+	service := spliceService()
+	service.Edge = true
+	service.EdgeAddresses = []netip.Addr{netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("198.51.100.20")}
+
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{service}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	published := fixture.publisher.publications[len(fixture.publisher.publications)-1]
+	if len(published.EdgeAddresses) != 2 {
+		t.Fatalf("edge addresses = %v, want both published", published.EdgeAddresses)
+	}
+
+	// An unchanged service must not look changed just because a slice is
+	// compared by identity somewhere.
+	before := len(fixture.publisher.publications)
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{service}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.publisher.publications) != before {
+		t.Fatal("an unchanged service was republished")
+	}
+}
+
+func testEdgeVerifier(t *testing.T) *edgeauth.Verifier {
+	t.Helper()
+	verifier, err := edgeauth.NewVerifier(bytes.Repeat([]byte{0x42}, 32), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verifier
 }

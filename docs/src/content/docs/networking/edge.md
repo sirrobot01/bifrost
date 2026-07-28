@@ -60,6 +60,25 @@ sudo systemctl restart bifrost
 sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
+## Place the edge near the viewers
+
+An edge relays every byte, so its location decides what IPv4 clients experience. Put it near the people using the services, not near the home host: a request that crosses an ocean to reach the edge and crosses back to reach home pays that distance twice, and TCP throughput falls as round-trip time rises.
+
+Measured from one deployment, a single edge one continent away from both the viewers and the origin was slower than a commercial tunnel with a nearby point of presence. The same services reached directly over IPv6 were several times faster than either. The edge exists so IPv4-only clients can connect at all; it is not the fast path.
+
+Publish more than one when viewers are spread out:
+
+```yaml
+edge:
+  enabled: true
+  ipv4_addresses:
+    - 203.0.113.10
+    - 198.51.100.20
+  key_file: /etc/bifrost/edge-key
+```
+
+Every listed address is published as an A record for each edge-enabled service, and clients pick between them. Run `bifrost edge join` on each host with a token from the same home deployment; they share the key.
+
 ## Route TLS traffic
 
 The edge reads the TLS ClientHello and extracts the SNI name. It does not end TLS and does not hold the site certificate.

@@ -84,6 +84,7 @@ static_services: []
 | `firewall.mode` | Use `managed` to let Bifrost own the inbound IPv6 policy, or `advisory` to only report on the existing one. |
 | `firewall.trusted_interfaces` | Managed mode only. Interfaces whose inbound traffic is accepted in full, such as a VPN link. |
 | `firewall.allow_ports` | Managed mode only. Extra inbound TCP ports accepted on every address. Put SSH here when you administer the host over IPv6. |
+| `firewall.pcp` | Ask the router to permit inbound traffic to the published sockets, using PCP. Most routers do not answer, in which case nothing changes and the manual rule remains the answer. |
 | `probe.endpoint` | Set an HTTPS probe URL only when you trust that service. |
 | `metrics.listen` | Use a loopback IP address and port. |
 
@@ -213,7 +214,7 @@ static_services:
 | `tls` | Use `auto` (the default) to terminate TLS with an automatic certificate on the splice listener, or `off` for a backend that speaks TLS itself. Direct mode ignores it. |
 | `public_address` | Set the backend IPv6 address when direct mode needs an explicit address. |
 | `proxy_protocol` | Enable this only when the backend accepts PROXY v2. |
-| `edge` | Enable this only for a configured IPv4 edge. |
+| `edge` | Enable this only for a configured IPv4 edge. Such services use splice mode automatically. |
 
 ### Direct mode
 

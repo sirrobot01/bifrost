@@ -27,7 +27,9 @@ func servicesFromConfig(configFile config.Config) ([]Service, error) {
 			service.PublicAddress = netip.MustParseAddr(configured.PublicAddress)
 		}
 		if configured.Edge {
-			service.EdgeAddress = netip.MustParseAddr(configFile.Edge.IPv4Address)
+			for _, address := range configFile.Edge.IPv4Addresses {
+				service.EdgeAddresses = append(service.EdgeAddresses, netip.MustParseAddr(address))
+			}
 		}
 		if err := service.validate(); err != nil {
 			return nil, fmt.Errorf("service %q: %w", service.ID, err)

@@ -129,3 +129,43 @@ func TestExampleConfigDecodes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Configuration a tool can work out for itself is ceremony. A file naming only
+// an interface and a service must load.
+func TestDecodeFillsInWhatItCan(t *testing.T) {
+	t.Parallel()
+
+	minimal := `version: 1
+interface: eth0
+dns:
+  provider: desec
+  ttl: 3600s
+  desec:
+    zone: example.com
+    token_file: /etc/bifrost/desec-token
+static_services:
+  - name: media
+    backend: 127.0.0.1:8096
+    listen: 443
+    dns: media.example.com
+`
+	configFile, err := Decode(strings.NewReader(minimal))
+	if err != nil {
+		t.Fatalf("a minimal configuration was rejected: %v", err)
+	}
+	if configFile.OwnerID == "" {
+		t.Fatal("owner_id was not derived")
+	}
+	if configFile.SecretFile != "/etc/bifrost/address-secret" {
+		t.Fatalf("secret_file = %q", configFile.SecretFile)
+	}
+	// Defaults must not silently override what the operator did state.
+	stated := strings.Replace(minimal, "interface: eth0", "interface: eth0\nowner_id: chosen-name", 1)
+	configFile, err = Decode(strings.NewReader(stated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configFile.OwnerID != "chosen-name" {
+		t.Fatalf("owner_id = %q, want the stated value", configFile.OwnerID)
+	}
+}

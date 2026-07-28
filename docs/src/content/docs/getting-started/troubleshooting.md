@@ -112,6 +112,10 @@ Bifrost marks the records it owns with a TXT record and refuses to modify record
 
 Resolve the conflict at the provider, or publish under a different name. Do not delete the ownership marker while the service is running.
 
+### `inbound`
+
+Only `doctor --probe` produces this. It asks an outside vantage to open a connection to a temporary listener on this host, which is the one question no local check can answer. An error here means the customer-edge router is dropping inbound traffic, and nothing on the host can change that.
+
 ### `external`
 
 The service is not reachable from the configured external probe, while the local address, listener, and host policy are correct. The remaining hop is the router. Confirm its inbound IPv6 rule.

@@ -260,7 +260,7 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 
 	for id, current := range c.services {
 		desiredService, exists := indexed[id]
-		if exists && desiredService == current.spec {
+		if exists && desiredService.Equal(current.spec) {
 			continue
 		}
 		actions = append(actions, Action{Service: id, Kind: "withdraw", Detail: current.spec.DNSName})
@@ -751,7 +751,7 @@ func uniqueAddresses(addresses []netip.Addr) []netip.Addr {
 
 func edgeAddresses(service Service) []netip.Addr {
 	if service.Edge {
-		return []netip.Addr{service.EdgeAddress}
+		return service.EdgeAddresses
 	}
 	return nil
 }

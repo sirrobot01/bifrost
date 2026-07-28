@@ -15,6 +15,33 @@ import (
 
 const CurrentVersion = 1
 
+// defaultConfigDir holds the configuration and its secrets.
+const defaultConfigDir = "/etc/bifrost"
+
+// defaultOwnerID marks DNS records as belonging to this host. The hostname is
+// stable, unique on a normal network, and already meaningful to the operator,
+// so it beats asking for a name that has no other use.
+func defaultOwnerID() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "bifrost"
+	}
+	sanitized := make([]rune, 0, len(hostname))
+	for _, character := range hostname {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9',
+			character == '-', character == '_', character == '.':
+			sanitized = append(sanitized, character)
+		}
+	}
+	if len(sanitized) == 0 {
+		return "bifrost"
+	}
+	return string(sanitized)
+}
+
 type Config struct {
 	Version        int             `yaml:"version"`
 	Interface      string          `yaml:"interface"`
@@ -112,8 +139,12 @@ type Docker struct {
 }
 
 type Edge struct {
-	Enabled       bool     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// IPv4Address is a single edge. IPv4Addresses supersedes it and allows
+	// several, which is how an operator puts an edge near each group of
+	// viewers instead of one far from all of them.
 	IPv4Address   string   `yaml:"ipv4_address,omitempty"`
+	IPv4Addresses []string `yaml:"ipv4_addresses,omitempty"`
 	KeyFile       string   `yaml:"key_file,omitempty"`
 	MaxClockSkew  Duration `yaml:"max_clock_skew"`
 	HeaderTimeout Duration `yaml:"header_timeout"`
@@ -163,6 +194,14 @@ func (c *Config) ApplyDefaults() {
 	if c.Version == 0 {
 		c.Version = CurrentVersion
 	}
+	// Every value below has one correct answer for almost every deployment,
+	// so asking for it is ceremony rather than configuration.
+	if c.OwnerID == "" {
+		c.OwnerID = defaultOwnerID()
+	}
+	if c.SecretFile == "" {
+		c.SecretFile = filepath.Join(defaultConfigDir, "address-secret")
+	}
 	if c.SettleWindow == 0 {
 		c.SettleWindow = Duration(10 * time.Second)
 	}
@@ -180,6 +219,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Docker.Socket == "" {
 		c.Docker.Socket = "/var/run/docker.sock"
+	}
+	if c.Edge.IPv4Address != "" && !slices.Contains(c.Edge.IPv4Addresses, c.Edge.IPv4Address) {
+		c.Edge.IPv4Addresses = append([]string{c.Edge.IPv4Address}, c.Edge.IPv4Addresses...)
 	}
 	if c.Edge.MaxClockSkew == 0 {
 		c.Edge.MaxClockSkew = Duration(30 * time.Second)
@@ -339,9 +381,14 @@ func (e Edge) validate() error {
 	if !e.Enabled {
 		return nil
 	}
-	address, err := netip.ParseAddr(e.IPv4Address)
-	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
-		return errors.New("ipv4_address must be public IPv4 when edge is enabled")
+	if len(e.IPv4Addresses) == 0 {
+		return errors.New("ipv4_address or ipv4_addresses is required when edge is enabled")
+	}
+	for _, candidate := range e.IPv4Addresses {
+		address, err := netip.ParseAddr(candidate)
+		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+			return fmt.Errorf("edge address %q must be public IPv4", candidate)
+		}
 	}
 	if e.KeyFile == "" {
 		return errors.New("key_file is required when edge is enabled")
