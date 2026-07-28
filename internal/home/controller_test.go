@@ -411,3 +411,41 @@ func TestControllerIsolatesCertificateFailures(t *testing.T) {
 func snapshot(address string) netwatch.Snapshot {
 	return netwatch.Snapshot{InterfaceName: "eth0", MTU: 1500, Candidates: []serviceaddr.Candidate{{Prefix: netip.MustParsePrefix(address)}}}
 }
+
+type fakePinholes struct {
+	applied  []hostfw.Spec
+	released int
+}
+
+func (f *fakePinholes) Apply(_ context.Context, spec hostfw.Spec) {
+	f.applied = append(f.applied, spec)
+}
+
+func (f *fakePinholes) Release(context.Context) { f.released++ }
+
+// The router is asked for the same sockets the host firewall opened, and a
+// clean stop closes what was opened.
+func TestControllerRequestsRouterPinholes(t *testing.T) {
+	t.Parallel()
+
+	fixture := newControllerFixture(t)
+	pinholes := &fakePinholes{}
+	fixture.controller.config.Firewall = &fakeFirewall{events: &fixture.events}
+	fixture.controller.config.Pinholes = pinholes
+
+	if _, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(pinholes.applied) != 1 || len(pinholes.applied[0].Endpoints) != 1 {
+		t.Fatalf("pinhole requests = %+v", pinholes.applied)
+	}
+	if pinholes.applied[0].Endpoints[0].Port != 443 {
+		t.Fatalf("requested port = %d", pinholes.applied[0].Endpoints[0].Port)
+	}
+	if err := fixture.controller.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if pinholes.released != 1 {
+		t.Fatalf("released %d times, want 1", pinholes.released)
+	}
+}

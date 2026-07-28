@@ -27,6 +27,7 @@ import (
 
 type Runtime struct {
 	config       config.Config
+	pinholes     *pinholeManager
 	observer     *netwatch.Observer
 	controller   *Controller
 	services     []Service
@@ -118,6 +119,13 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		logger.Warn("managed firewall mode is enabled: inbound IPv6 will be dropped except for published services and configured allowances",
 			"trusted_interfaces", configFile.Firewall.TrustedInterfaces, "allow_ports", configFile.Firewall.AllowPorts)
 	}
+	var pinholes *pinholeManager
+	if configFile.Firewall.PCP {
+		pinholes, err = newPinholeManager(secret, logger)
+		if err != nil {
+			logger.Warn("router pinhole requests are unavailable", "error", err)
+		}
+	}
 	certificates, err := certauto.NewManager(certauto.Config{
 		Provider:     provider,
 		StateDir:     configFile.ACME.StateDir,
@@ -136,6 +144,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		Certificates:       certificates,
 		Firewall:           firewall,
 		FirewallAllowances: allowances,
+		Pinholes:           pinholeRequester(pinholes),
 		Listen: func(ctx context.Context, listenerConfig exposure.Config) (Splicer, error) {
 			return exposure.Listen(ctx, listenerConfig)
 		},
@@ -159,7 +168,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
-	runtime := &Runtime{config: configFile, observer: observer, controller: controller, services: services, publisher: publisher, certificates: certificates, docker: dockerClient, logger: logger, startedAt: time.Now()}
+	runtime := &Runtime{config: configFile, pinholes: pinholes, observer: observer, controller: controller, services: services, publisher: publisher, certificates: certificates, docker: dockerClient, logger: logger, startedAt: time.Now()}
 	metricsServer, err := observability.NewServer(configFile.Metrics.Listen, runtime.observabilitySnapshot)
 	if err != nil {
 		return nil, err

@@ -87,6 +87,10 @@ type Firewall struct {
 	// services Bifrost does not publish but you still need reachable. SSH
 	// belongs here when you administer the host over IPv6.
 	AllowPorts []uint16 `yaml:"allow_ports,omitempty"`
+	// PCP asks the customer-edge router to permit inbound traffic to the
+	// published sockets. Most routers do not answer, in which case the manual
+	// rule remains the answer and nothing changes.
+	PCP bool `yaml:"pcp,omitempty"`
 }
 
 // Managed reports whether Bifrost owns the host firewall policy.

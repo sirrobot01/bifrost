@@ -42,6 +42,13 @@ type Splicer interface {
 
 type ListenerFactory func(context.Context, exposure.Config) (Splicer, error)
 
+// PinholeRequester asks something outside the host, normally the router, to
+// permit inbound traffic to the published sockets.
+type PinholeRequester interface {
+	Apply(ctx context.Context, spec hostfw.Spec)
+	Release(ctx context.Context)
+}
+
 // CertificateSource issues and serves certificates for splice services that
 // terminate TLS.
 type CertificateSource interface {
@@ -91,10 +98,13 @@ type ControllerConfig struct {
 	// FirewallAllowances are the operator's extra accepts, applied alongside
 	// the published sockets.
 	FirewallAllowances hostfw.Spec
-	PrefixOverride     netip.Prefix
-	GlobalLimiter      *exposure.Limiter
-	EdgeVerifier       *edgeauth.Verifier
-	EdgeHeaderTimeout  time.Duration
+	// Pinholes, when set, asks the customer-edge router to permit the same
+	// sockets. Failure never blocks publication.
+	Pinholes          PinholeRequester
+	PrefixOverride    netip.Prefix
+	GlobalLimiter     *exposure.Limiter
+	EdgeVerifier      *edgeauth.Verifier
+	EdgeHeaderTimeout time.Duration
 }
 
 type Controller struct {
@@ -140,6 +150,9 @@ func (c *Controller) applyFirewall(ctx context.Context, pending []hostfw.Endpoin
 	c.config.Logger.Info("applied managed firewall policy", "policy", spec.Describe())
 	c.appliedFirewall = spec
 	c.firewallApplied = true
+	if c.config.Pinholes != nil {
+		c.config.Pinholes.Apply(ctx, spec)
+	}
 	return nil
 }
 
@@ -474,6 +487,9 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	// Remove the managed table so a stopped daemon leaves the host exactly as
 	// it was before it started. A crash leaves the table in place, which fails
 	// closed; only a clean stop reverts the policy.
+	if c.config.Pinholes != nil {
+		c.config.Pinholes.Release(ctx)
+	}
 	if c.config.Firewall != nil && c.firewallApplied {
 		if err := c.config.Firewall.Remove(ctx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Errorf("remove managed firewall: %w", err))
