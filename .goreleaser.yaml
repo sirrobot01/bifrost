@@ -41,7 +41,26 @@ archives:
 
 nfpms:
   - id: bifrost
-    package_name: bifrost
+    # Debian and Ubuntu already ship a package called `bifrost`: an unrelated
+    # bioinformatics tool whose version sorts above ours. Sharing the name meant
+    # `apt upgrade` treated that package as a newer Bifrost and replaced this
+    # one with it, deleting the binary and both units. A distinct package name
+    # removes the comparison entirely. Only the package is renamed; the binary,
+    # the units, and /etc/bifrost keep their names.
+    package_name: bifrost-ingress
+    # Releases up to 0.5.2 were packaged as `bifrost` and own /usr/bin/bifrost,
+    # so the new package has to take that path over. The bound excludes the
+    # distribution's package, which is 1.3.1 and ships /usr/bin/Bifrost.
+    conflicts:
+      - bifrost (<= 0.5.2)
+    replaces:
+      - bifrost (<= 0.5.2)
+    overrides:
+      rpm:
+        conflicts:
+          - bifrost <= 0.5.2
+        replaces:
+          - bifrost <= 0.5.2
     vendor: Bifrost
     homepage: https://bifrost.biodun.dev
     maintainer: Mukhtar Akere <akeremukhtar10@gmail.com>

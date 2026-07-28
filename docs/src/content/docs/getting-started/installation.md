@@ -13,6 +13,8 @@ The script detects the CPU and package manager, verifies the download against th
 
 The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0755`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
+The deb and rpm are named `bifrost-ingress`, because Debian and Ubuntu already ship an unrelated package called `bifrost`. Only the package name differs; the binary, the units, and `/etc/bifrost` are unchanged, so every command is still `bifrost`.
+
 Continue with the [quickstart](../quickstart/) to check the host, create the configuration, and start the service.
 
 The rest of this page covers the alternatives to the script, release verification, and upgrades.
@@ -108,22 +110,47 @@ Packages, archives, and container images are all covered by the same checksum fi
 
 ## Upgrade Bifrost
 
-With a package, installing the new deb or rpm replaces the binary and leaves `/etc/bifrost` alone. Restart afterwards:
+```sh
+sudo bifrost upgrade
+```
+
+This downloads the latest release archive, verifies it against the release checksum file, and replaces the running binary in place. `/etc/bifrost` is never touched. Add `--check` to compare versions without installing anything, or `--restart` to restart whichever units are running once the new binary is in place.
+
+Without `--restart`, the command prints what to restart. The old binary keeps serving until you do:
 
 ```sh
-sudo systemctl restart bifrost
+sudo systemctl restart bifrost          # home
+sudo systemctl restart bifrost-edge     # edge
 sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
-With an archive:
+Restarting the edge only drops connections in flight. Restarting home removes owned DNS records and managed addresses first, so it can interrupt service briefly, and resolver caches can extend that past the configured TTL.
 
-1. Download and verify the new release.
-2. Run the new binary with `serve --dry-run`.
-3. Stop the service.
-4. Replace the binary.
-5. Start the service.
-6. Run `bifrost check`.
+Upgrade home and edge hosts to the same version. The edge header carries a fixed version byte with no negotiation, so a mismatched pair has nothing that would warn you if the frame format ever changes.
 
-A clean stop removes owned DNS records and managed addresses, so a restart can interrupt service briefly. Resolver caches can extend that past the configured TTL.
+### Upgrading with a package manager
 
-Keep the old binary until every check passes, and restore it if you must roll back.
+Installing a newer deb or rpm also works and keeps the package database accurate:
+
+```sh
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+sudo systemctl restart bifrost
+```
+
+:::caution[Installs from 0.5.2 and earlier need one manual step]
+Those releases were packaged as `bifrost`, which collides with an unrelated package of that name in Debian and Ubuntu. Because the distribution's version sorts higher, `apt upgrade` could treat it as a newer Bifrost and replace this one with it, removing the binary and both units.
+
+Move to the renamed package once, on each host:
+
+```sh
+sudo apt-mark unhold bifrost 2>/dev/null || true
+sudo apt-get remove -y bifrost
+curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+```
+
+`/etc/bifrost` survives, because the package does not own it. Check with `dpkg -l bifrost-ingress` that the new name is installed.
+:::
+
+### Rolling back
+
+Keep the old binary until every check passes. `bifrost upgrade` writes the new binary by renaming it over the old one, so an interrupted upgrade leaves the previous binary in place rather than a partial file.

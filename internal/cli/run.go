@@ -63,6 +63,8 @@ func (r Runner) Run(ctx context.Context, arguments []string) int {
 		err = r.runServe(ctx, arguments[1:])
 	case "edge":
 		err = r.runEdge(ctx, arguments[1:])
+	case "upgrade":
+		err = r.runUpgrade(ctx, arguments[1:])
 	case "version":
 		_, err = fmt.Fprintln(r.Stdout, r.Version)
 	case "help", "-h", "--help":
@@ -332,7 +334,7 @@ func (r Runner) writeLiveStatus(ctx context.Context, configFile config.Config, j
 }
 
 func (r Runner) usage() {
-	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <doctor|init|check|edge|serve|status|version> [flags]")
+	_, _ = fmt.Fprintln(r.Stderr, "usage: bifrost <doctor|init|check|edge|serve|status|upgrade|version> [flags]")
 	_, _ = fmt.Fprintln(r.Stderr)
 	_, _ = fmt.Fprintln(r.Stderr, "  doctor   report whether this host can run Bifrost; needs no config")
 	_, _ = fmt.Fprintln(r.Stderr, "  init     create the configuration, secret, and credential files")
@@ -342,6 +344,7 @@ func (r Runner) usage() {
 	_, _ = fmt.Fprintln(r.Stderr, "           edge invite   print one token enrolling an edge host (run at home)")
 	_, _ = fmt.Fprintln(r.Stderr, "           edge join     configure this host from a token (run on the edge)")
 	_, _ = fmt.Fprintln(r.Stderr, "  status   show desired or running state")
+	_, _ = fmt.Fprintln(r.Stderr, "  upgrade  replace this binary with the latest release")
 	_, _ = fmt.Fprintln(r.Stderr, "  version  print the build version")
 }
 
