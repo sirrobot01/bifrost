@@ -121,7 +121,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	}
 	var pinholes *pinholeManager
 	if configFile.Firewall.PCP {
-		pinholes, err = newPinholeManager(secret, logger)
+		pinholes, err = newPinholeManager(configFile.Interface, secret, logger)
 		if err != nil {
 			logger.Warn("router pinhole requests are unavailable", "error", err)
 		}
@@ -320,6 +320,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 				pending = false
 			}
 		case <-sweep.C:
+			if r.pinholes != nil {
+				r.pinholes.Renew(ctx)
+			}
 			if !pending {
 				actions, err := r.controller.Sweep(ctx)
 				if err != nil {

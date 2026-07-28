@@ -415,12 +415,17 @@ func snapshot(address string) netwatch.Snapshot {
 }
 
 type fakePinholes struct {
-	applied  []hostfw.Spec
+	ensured  []hostfw.Endpoint
+	removed  []hostfw.Endpoint
 	released int
 }
 
-func (f *fakePinholes) Apply(_ context.Context, spec hostfw.Spec) {
-	f.applied = append(f.applied, spec)
+func (f *fakePinholes) Ensure(_ context.Context, endpoint hostfw.Endpoint) {
+	f.ensured = append(f.ensured, endpoint)
+}
+
+func (f *fakePinholes) Remove(_ context.Context, endpoint hostfw.Endpoint) {
+	f.removed = append(f.removed, endpoint)
 }
 
 func (f *fakePinholes) Release(context.Context) { f.released++ }
@@ -432,23 +437,32 @@ func TestControllerRequestsRouterPinholes(t *testing.T) {
 
 	fixture := newControllerFixture(t)
 	pinholes := &fakePinholes{}
-	fixture.controller.config.Firewall = &fakeFirewall{events: &fixture.events}
 	fixture.controller.config.Pinholes = pinholes
+	dryRun, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(dryRun, func(action Action) bool { return action.Kind == "router" }) {
+		t.Fatalf("dry-run omitted the router change: %+v", dryRun)
+	}
 
 	if _, err := fixture.controller.Reconcile(t.Context(), []Service{spliceService()}, snapshot("2001:db8:1::10/64"), false); err != nil {
 		t.Fatal(err)
 	}
-	if len(pinholes.applied) != 1 || len(pinholes.applied[0].Endpoints) != 1 {
-		t.Fatalf("pinhole requests = %+v", pinholes.applied)
+	if len(pinholes.ensured) != 1 {
+		t.Fatalf("pinhole requests = %+v", pinholes.ensured)
 	}
-	if pinholes.applied[0].Endpoints[0].Port != 443 {
-		t.Fatalf("requested port = %d", pinholes.applied[0].Endpoints[0].Port)
+	if pinholes.ensured[0].Port != 443 {
+		t.Fatalf("requested port = %d", pinholes.ensured[0].Port)
 	}
 	if err := fixture.controller.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if pinholes.released != 1 {
 		t.Fatalf("released %d times, want 1", pinholes.released)
+	}
+	if len(pinholes.removed) != 1 || pinholes.removed[0] != pinholes.ensured[0] {
+		t.Fatalf("removed pinholes = %+v, ensured = %+v", pinholes.removed, pinholes.ensured)
 	}
 }
 

@@ -21,12 +21,17 @@ import (
 )
 
 const (
-	version      = 2
-	opcodeMap    = 1
-	requestSize  = 24
-	mapPayload   = 36
-	responseSize = 1100
-	serverPort   = 5351
+	version     = 2
+	opcodeMap   = 1
+	requestSize = 24
+	mapPayload  = 36
+	// PREFER_FAILURE tells the router to reject the request instead of
+	// silently assigning a different address or port. A translated mapping is
+	// not useful for an IPv6 firewall pinhole.
+	preferFailureOptionSize = 4
+	optionPreferFailure     = 2
+	responseSize            = 1100
+	serverPort              = 5351
 	// protocolTCP is the IANA number carried in a MAP request.
 	protocolTCP = 6
 )
@@ -39,6 +44,7 @@ const (
 	resultNoResources          = 8
 	resultUnsupportedProtocol  = 9
 	resultUnsupportedOpcode    = 4
+	resultUnsupportedOption    = 5
 	resultAddressMismatch      = 12
 	resultCannotProvideExtenal = 11
 )
@@ -76,15 +82,19 @@ func NewClient(server netip.Addr) *Client {
 // Request asks the router to permit inbound TCP to the mapping. It returns the
 // lifetime the router granted, which may be shorter than requested.
 func (c *Client) Request(ctx context.Context, mapping Mapping) (time.Duration, error) {
-	if !mapping.Internal.Is6() {
+	if !mapping.Internal.Is6() || mapping.Internal.Is4In6() {
 		return 0, errors.New("PCP mappings here are IPv6 pinholes")
 	}
 	if mapping.Port == 0 {
 		return 0, errors.New("a mapping needs a port")
 	}
+	lifetimeSeconds := mapping.Lifetime / time.Second
+	if mapping.Lifetime < 0 || lifetimeSeconds > time.Duration(^uint32(0)) {
+		return 0, errors.New("mapping lifetime is outside PCP's 32-bit seconds range")
+	}
 
 	payload := buildMapRequest(mapping)
-	response, err := c.exchange(ctx, payload)
+	response, err := c.exchange(ctx, mapping, payload)
 	if err != nil {
 		return 0, err
 	}
@@ -97,10 +107,36 @@ func (c *Client) Request(ctx context.Context, mapping Mapping) (time.Duration, e
 	if response[1]&0x80 == 0 {
 		return 0, fmt.Errorf("%w: reply was not marked as a response", ErrUnsupported)
 	}
+	if response[1]&0x7f != opcodeMap {
+		return 0, fmt.Errorf("%w: reply used opcode %d instead of MAP", ErrUnsupported, response[1]&0x7f)
+	}
 	if code := response[3]; code != resultSuccess {
 		return 0, resultError(code)
 	}
-	granted := time.Duration(binary.BigEndian.Uint32(response[8:12])) * time.Second
+	if len(response) < requestSize+mapPayload {
+		return 0, fmt.Errorf("%w: MAP response was %d bytes", ErrUnsupported, len(response))
+	}
+	body := response[requestSize:]
+	var responseNonce [12]byte
+	copy(responseNonce[:], body[0:12])
+	if responseNonce != mapping.Nonce {
+		return 0, fmt.Errorf("%w: MAP response nonce did not match the request", ErrUnsupported)
+	}
+	if body[12] != protocolTCP {
+		return 0, fmt.Errorf("%w: MAP response protocol was %d instead of TCP", ErrUnsupported, body[12])
+	}
+	if port := binary.BigEndian.Uint16(body[16:18]); port != mapping.Port {
+		return 0, fmt.Errorf("%w: MAP response internal port was %d instead of %d", ErrUnsupported, port, mapping.Port)
+	}
+	if port := binary.BigEndian.Uint16(body[18:20]); port != mapping.Port {
+		return 0, fmt.Errorf("router assigned external port %d instead of requested port %d", port, mapping.Port)
+	}
+	var assignedBytes [16]byte
+	copy(assignedBytes[:], body[20:36])
+	if assigned := netip.AddrFrom16(assignedBytes); assigned != mapping.Internal.WithZone("") {
+		return 0, fmt.Errorf("router assigned external address %s instead of requested address %s", assigned, mapping.Internal)
+	}
+	granted := time.Duration(binary.BigEndian.Uint32(response[4:8])) * time.Second
 	return granted, nil
 }
 
@@ -112,13 +148,22 @@ func (c *Client) Release(ctx context.Context, mapping Mapping) error {
 	return err
 }
 
-func (c *Client) exchange(ctx context.Context, payload []byte) ([]byte, error) {
-	dialer := &net.Dialer{Timeout: c.timeout}
+func (c *Client) exchange(ctx context.Context, mapping Mapping, payload []byte) ([]byte, error) {
+	// The PCP Client IP Address must be the packet's source address. Binding
+	// here is what lets a router distinguish the service address from the
+	// machine's ordinary management address.
+	dialer := &net.Dialer{
+		Timeout: c.timeout,
+		LocalAddr: &net.UDPAddr{
+			IP:   net.IP(mapping.Internal.AsSlice()),
+			Zone: mapping.Internal.Zone(),
+		},
+	}
 	port := uint16(serverPort)
 	if c.serverPortOverride != 0 {
 		port = c.serverPortOverride
 	}
-	connection, err := dialer.DialContext(ctx, "udp", netip.AddrPortFrom(c.server, port).String())
+	connection, err := dialer.DialContext(ctx, "udp6", netip.AddrPortFrom(c.server, port).String())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnsupported, err)
 	}
@@ -145,14 +190,14 @@ func (c *Client) exchange(ctx context.Context, payload []byte) ([]byte, error) {
 
 // buildMapRequest renders a MAP request per RFC 6887 section 11.1.
 func buildMapRequest(mapping Mapping) []byte {
-	payload := make([]byte, requestSize+mapPayload)
+	payload := make([]byte, requestSize+mapPayload+preferFailureOptionSize)
 	payload[0] = version
 	payload[1] = opcodeMap
 	binary.BigEndian.PutUint32(payload[4:8], uint32(mapping.Lifetime.Seconds()))
 	internal := mapping.Internal.As16()
 	copy(payload[8:24], internal[:])
 
-	body := payload[24:]
+	body := payload[requestSize : requestSize+mapPayload]
 	copy(body[0:12], mapping.Nonce[:])
 	body[12] = protocolTCP
 	binary.BigEndian.PutUint16(body[16:18], mapping.Port)
@@ -160,6 +205,7 @@ func buildMapRequest(mapping Mapping) []byte {
 	// Suggested external address: the same IPv6 address, since a pinhole does
 	// not translate.
 	copy(body[20:36], internal[:])
+	payload[requestSize+mapPayload] = optionPreferFailure
 	return payload
 }
 
@@ -167,7 +213,7 @@ func resultError(code uint8) error {
 	switch code {
 	case resultUnsupportedVersion:
 		return fmt.Errorf("%w: the router rejected PCP version %d", ErrUnsupported, version)
-	case resultUnsupportedOpcode, resultUnsupportedProtocol:
+	case resultUnsupportedOpcode, resultUnsupportedOption, resultUnsupportedProtocol:
 		return fmt.Errorf("%w: the router does not support this request", ErrUnsupported)
 	case resultNotAuthorized:
 		return errors.New("the router refused the request; PCP may be disabled in its configuration")

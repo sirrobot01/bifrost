@@ -45,7 +45,8 @@ type ListenerFactory func(context.Context, exposure.Config) (Splicer, error)
 // PinholeRequester asks something outside the host, normally the router, to
 // permit inbound traffic to the published sockets.
 type PinholeRequester interface {
-	Apply(ctx context.Context, spec hostfw.Spec)
+	Ensure(ctx context.Context, endpoint hostfw.Endpoint)
+	Remove(ctx context.Context, endpoint hostfw.Endpoint)
 	Release(ctx context.Context)
 }
 
@@ -150,9 +151,6 @@ func (c *Controller) applyFirewall(ctx context.Context, pending []hostfw.Endpoin
 	c.config.Logger.Info("applied managed firewall policy", "policy", spec.Describe())
 	c.appliedFirewall = spec
 	c.firewallApplied = true
-	if c.config.Pinholes != nil {
-		c.config.Pinholes.Apply(ctx, spec)
-	}
 	return nil
 }
 
@@ -329,6 +327,12 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 			}
 			actions = append(actions, Action{Kind: "firewall", Detail: "drop inbound IPv6 except: " + preview.Describe()})
 		}
+		if c.config.Pinholes != nil {
+			for _, planned := range plans {
+				socket := netip.AddrPortFrom(planned.address, planned.service.ListenPort)
+				actions = append(actions, Action{Service: planned.service.ID, Kind: "router", Detail: "request PCP pinhole for " + socket.String()})
+			}
+		}
 		return actions, nil
 	}
 
@@ -377,10 +381,16 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 			reconcileErrors = append(reconcileErrors, fmt.Errorf("prepare service %q: %w", id, err))
 			continue
 		}
+		pinhole := hostfw.Endpoint{Service: id, Address: newEndpoint.address, Port: planned.service.ListenPort}
+		if c.config.Pinholes != nil {
+			// PCP requires its Client IP field to equal the packet source, so the
+			// address must exist before the router request is sent.
+			c.config.Pinholes.Ensure(ctx, pinhole)
+		}
 		addresses := append(current.addresses(), newEndpoint.address)
 		addresses = uniqueAddresses(addresses)
 		if err := c.config.Publisher.Ensure(ctx, dnspublish.Publication{Name: planned.service.DNSName, Addresses: addresses, EdgeAddresses: edgeAddresses(planned.service), TTL: c.config.TTL}); err != nil {
-			_ = c.teardownEndpoint(context.WithoutCancel(ctx), newEndpoint)
+			_ = c.teardownEndpoint(context.WithoutCancel(ctx), planned.service, newEndpoint)
 			reconcileErrors = append(reconcileErrors, fmt.Errorf("publish service %q: %w", id, err))
 			continue
 		}
@@ -478,6 +488,9 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	wg.Wait()
 	for id, state := range c.services {
 		for _, endpoint := range state.endpoints {
+			if c.config.Pinholes != nil {
+				c.config.Pinholes.Remove(ctx, hostfw.Endpoint{Service: id, Address: endpoint.address, Port: state.spec.ListenPort})
+			}
 			if err := c.releaseEndpoint(endpoint); err != nil {
 				shutdownErrors = append(shutdownErrors, fmt.Errorf("release service %q: %w", id, err))
 			}
@@ -639,7 +652,7 @@ func (c *Controller) retireExpired(ctx context.Context) error {
 			return err
 		}
 		for _, endpoint := range retire {
-			if err := c.teardownEndpoint(ctx, endpoint); err != nil {
+			if err := c.teardownEndpoint(ctx, state.spec, endpoint); err != nil {
 				return err
 			}
 		}
@@ -667,13 +680,17 @@ func (c *Controller) removeState(ctx context.Context, state *serviceState) error
 	}
 	var teardownErrors []error
 	for _, endpoint := range state.endpoints {
-		teardownErrors = append(teardownErrors, c.teardownEndpoint(ctx, endpoint))
+		teardownErrors = append(teardownErrors, c.teardownEndpoint(ctx, state.spec, endpoint))
 	}
 	return errors.Join(teardownErrors...)
 }
 
-func (c *Controller) teardownEndpoint(ctx context.Context, endpoint *endpoint) error {
-	return errors.Join(c.drainEndpoint(ctx, endpoint), c.releaseEndpoint(endpoint))
+func (c *Controller) teardownEndpoint(ctx context.Context, service Service, endpoint *endpoint) error {
+	drainErr := c.drainEndpoint(ctx, endpoint)
+	if c.config.Pinholes != nil {
+		c.config.Pinholes.Remove(ctx, hostfw.Endpoint{Service: service.ID, Address: endpoint.address, Port: service.ListenPort})
+	}
+	return errors.Join(drainErr, c.releaseEndpoint(endpoint))
 }
 
 func (c *Controller) drainEndpoint(ctx context.Context, endpoint *endpoint) error {

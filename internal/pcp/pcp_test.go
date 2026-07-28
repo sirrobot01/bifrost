@@ -13,6 +13,10 @@ import (
 // fakeServer answers one PCP request with the given result code and lifetime,
 // and hands back what it received so the wire format can be asserted.
 func fakeServer(t *testing.T, code uint8, lifetime uint32) (netip.Addr, uint16, <-chan []byte) {
+	return fakeServerResponse(t, code, lifetime, nil)
+}
+
+func fakeServerResponse(t *testing.T, code uint8, lifetime uint32, mutate func([]byte)) (netip.Addr, uint16, <-chan []byte) {
 	t.Helper()
 
 	connection, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6loopback, Port: 0})
@@ -28,15 +32,43 @@ func fakeServer(t *testing.T, code uint8, lifetime uint32) (netip.Addr, uint16, 
 			return
 		}
 		received <- append([]byte(nil), buffer[:read]...)
-		response := make([]byte, 60)
-		response[0] = version
-		response[1] = opcodeMap | 0x80
+		response := append([]byte(nil), buffer[:read]...)
+		response[1] |= 0x80
 		response[3] = code
-		binary.BigEndian.PutUint32(response[8:12], lifetime)
+		binary.BigEndian.PutUint32(response[4:8], lifetime)
+		if mutate != nil {
+			mutate(response)
+		}
 		_, _ = connection.WriteToUDP(response, sender)
 	}()
 	address := connection.LocalAddr().(*net.UDPAddr)
 	return netip.MustParseAddr("::1"), uint16(address.Port), received
+}
+
+func TestRequestRejectsAnUncorrelatedResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func([]byte)
+	}{
+		{name: "opcode", mutate: func(response []byte) { response[1] = 0x80 }},
+		{name: "nonce", mutate: func(response []byte) { response[24]++ }},
+		{name: "protocol", mutate: func(response []byte) { response[36] = 17 }},
+		{name: "internal port", mutate: func(response []byte) { binary.BigEndian.PutUint16(response[40:42], 80) }},
+		{name: "external port", mutate: func(response []byte) { binary.BigEndian.PutUint16(response[42:44], 8443) }},
+		{name: "external address", mutate: func(response []byte) { response[59] = 2 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, port, _ := fakeServerResponse(t, resultSuccess, 3600, test.mutate)
+			client := newTestClient(t, port)
+			_, err := client.Request(t.Context(), Mapping{Internal: netip.MustParseAddr("::1"), Port: 443, Lifetime: time.Hour, Nonce: [12]byte{1}})
+			if err == nil {
+				t.Fatal("mismatched MAP response was accepted")
+			}
+		})
+	}
 }
 
 func newTestClient(t *testing.T, port uint16) *Client {
@@ -52,7 +84,9 @@ func TestRequestSendsAWellFormedMapping(t *testing.T) {
 
 	_, port, received := fakeServer(t, resultSuccess, 3600)
 	client := newTestClient(t, port)
-	internal := netip.MustParseAddr("2001:db8::10")
+	// The client binds the mapping address as its packet source, as PCP
+	// requires, so integration tests use an address assigned to loopback.
+	internal := netip.MustParseAddr("::1")
 	mapping := Mapping{Internal: internal, Port: 443, Lifetime: time.Hour, Nonce: [12]byte{1, 2, 3}}
 
 	granted, err := client.Request(t.Context(), mapping)
@@ -64,8 +98,8 @@ func TestRequestSendsAWellFormedMapping(t *testing.T) {
 	}
 
 	payload := <-received
-	if len(payload) != requestSize+mapPayload {
-		t.Fatalf("request is %d bytes, want %d", len(payload), requestSize+mapPayload)
+	if len(payload) != requestSize+mapPayload+preferFailureOptionSize {
+		t.Fatalf("request is %d bytes, want %d", len(payload), requestSize+mapPayload+preferFailureOptionSize)
 	}
 	if payload[0] != version || payload[1] != opcodeMap {
 		t.Fatalf("version/opcode = %d/%d", payload[0], payload[1])
@@ -83,6 +117,9 @@ func TestRequestSendsAWellFormedMapping(t *testing.T) {
 	if got := binary.BigEndian.Uint16(body[16:18]); got != 443 {
 		t.Fatalf("internal port = %d", got)
 	}
+	if payload[requestSize+mapPayload] != optionPreferFailure {
+		t.Fatal("request permits the router to substitute another address or port")
+	}
 }
 
 // A router that refuses must produce an error the operator can act on, not a
@@ -92,7 +129,7 @@ func TestRequestReportsRefusal(t *testing.T) {
 
 	_, port, _ := fakeServer(t, resultNotAuthorized, 0)
 	client := newTestClient(t, port)
-	_, err := client.Request(t.Context(), Mapping{Internal: netip.MustParseAddr("2001:db8::10"), Port: 443, Lifetime: time.Hour})
+	_, err := client.Request(t.Context(), Mapping{Internal: netip.MustParseAddr("::1"), Port: 443, Lifetime: time.Hour})
 	if err == nil {
 		t.Fatal("a refused mapping was reported as success")
 	}
@@ -114,7 +151,7 @@ func TestRequestTreatsSilenceAsUnsupported(t *testing.T) {
 	client := newTestClient(t, uint16(connection.LocalAddr().(*net.UDPAddr).Port))
 	client.timeout = 300 * time.Millisecond
 
-	_, err = client.Request(t.Context(), Mapping{Internal: netip.MustParseAddr("2001:db8::10"), Port: 443, Lifetime: time.Hour})
+	_, err = client.Request(t.Context(), Mapping{Internal: netip.MustParseAddr("::1"), Port: 443, Lifetime: time.Hour})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
@@ -125,7 +162,7 @@ func TestReleaseAsksForZeroLifetime(t *testing.T) {
 
 	_, port, received := fakeServer(t, resultSuccess, 0)
 	client := newTestClient(t, port)
-	if err := client.Release(context.Background(), Mapping{Internal: netip.MustParseAddr("2001:db8::10"), Port: 443, Lifetime: time.Hour}); err != nil {
+	if err := client.Release(context.Background(), Mapping{Internal: netip.MustParseAddr("::1"), Port: 443, Lifetime: time.Hour}); err != nil {
 		t.Fatal(err)
 	}
 	payload := <-received
