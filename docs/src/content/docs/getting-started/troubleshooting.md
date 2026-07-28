@@ -122,7 +122,7 @@ Resolve the conflict at the provider, or publish under a different name. Do not 
 
 The service was not reachable from outside, while the local address, listener, and host policy are all correct. The finding names a failed edge when an edge pool is the vantage; every published edge must work. Otherwise the remaining hop is the router, so confirm its inbound IPv6 rule.
 
-With no way to look from outside this is a warning instead, and `check` closes by saying that nothing it ran proves internet reachability. An enabled edge serves as the prober automatically; `probe.endpoint` uses an HTTPS service instead. `--require-external` makes the unverified case a non-zero exit, which is what you want in a monitoring job. See [external probe](../../reference/external-probe/).
+With no way to look from outside this is a warning instead, and `check` closes by saying that outside verification did not cover every service. An enabled edge serves as the prober automatically; `probe.endpoint` uses an HTTPS service instead. `--require-external` makes the unverified case a non-zero exit, which is what you want in a monitoring job. See [external probe](../../reference/external-probe/).
 
 ### `pmtu`
 

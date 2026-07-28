@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,8 +86,33 @@ func TestEdgeProberReportsUnreachable(t *testing.T) {
 	prober := NewEdgeProber(netip.MustParseAddr("127.0.0.1"))
 	prober.timeout = 2 * time.Second
 	result, err := prober.Probe(t.Context(), ProbeRequest{Port: 1, ServerName: "media.example.com"})
-	if err == nil && result.Reachable {
-		t.Fatal("an unreachable service was reported as reachable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reachable || result.Detail == "" {
+		t.Fatalf("unreachable result = %+v", result)
+	}
+}
+
+func TestEdgeProberRequiresEveryPublishedEdge(t *testing.T) {
+	t.Parallel()
+
+	listener := testTLSListener(t)
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+	prober := NewEdgeProber(
+		netip.MustParseAddr("127.0.0.1"),
+		netip.MustParseAddr("127.0.0.2"),
+	)
+
+	result, err := prober.Probe(t.Context(), ProbeRequest{Port: port, ServerName: "media.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reachable {
+		t.Fatal("one healthy edge hid another failed published edge")
+	}
+	if !strings.Contains(result.Detail, "127.0.0.2") {
+		t.Fatalf("failure does not identify the bad edge: %q", result.Detail)
 	}
 }
 

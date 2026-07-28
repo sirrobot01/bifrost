@@ -303,6 +303,8 @@ func writeCheckSummary(writer io.Writer, report diagnose.Report) error {
 	scope := "Every local check passed"
 	if report.Verification == diagnose.VerificationExternal {
 		scope = "Every check passed, and the services answered from outside this network"
+	} else if report.Verification == diagnose.VerificationPartial {
+		scope = "Local checks passed, and some services answered from outside this network"
 	}
 	summary := "\n" + scope
 	if warningCount > 0 {
@@ -312,7 +314,7 @@ func writeCheckSummary(writer io.Writer, report diagnose.Report) error {
 		return err
 	}
 	if report.Verification != diagnose.VerificationExternal {
-		_, err := fmt.Fprint(writer, "Nothing here proves the services are reachable from the internet: every\ncheck above ran on this host. Enable an external probe to find out.\n")
+		_, err := fmt.Fprint(writer, "Outside verification did not prove every service reachable from the internet.\nConfigure or repair an external probe, then check again.\n")
 		return err
 	}
 	return nil

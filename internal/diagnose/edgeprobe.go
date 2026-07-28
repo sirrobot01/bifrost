@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -22,25 +24,62 @@ import (
 // It cannot measure path MTU, because it never sends large frames, so it
 // reports reachability only.
 type EdgeProber struct {
-	address netip.Addr
-	timeout time.Duration
+	addresses []netip.Addr
+	timeout   time.Duration
 }
 
-func NewEdgeProber(address netip.Addr) *EdgeProber {
-	return &EdgeProber{address: address, timeout: 10 * time.Second}
+func NewEdgeProber(addresses ...netip.Addr) *EdgeProber {
+	return &EdgeProber{addresses: append([]netip.Addr(nil), addresses...), timeout: 10 * time.Second}
+}
+
+// Supports prevents a deployment-wide edge from being treated as proof for a
+// service that has no A records pointing at that edge.
+func (p *EdgeProber) Supports(request ProbeRequest) bool {
+	return len(request.EdgeAddresses) > 0
 }
 
 func (p *EdgeProber) Probe(ctx context.Context, request ProbeRequest) (ProbeResult, error) {
 	if request.ServerName == "" {
 		return ProbeResult{}, fmt.Errorf("the edge dispatches on a TLS name, so probing needs one")
 	}
+	if len(p.addresses) == 0 {
+		return ProbeResult{}, fmt.Errorf("probing needs at least one edge address")
+	}
 	probeContext, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
+	type outcome struct {
+		address netip.Addr
+		err     error
+	}
+	outcomes := make(chan outcome, len(p.addresses))
+	for _, address := range p.addresses {
+		go func() {
+			outcomes <- outcome{address: address, err: probeEdge(probeContext, address, request)}
+		}()
+	}
+	var failures []string
+	for range p.addresses {
+		result := <-outcomes
+		if result.err != nil {
+			failures = append(failures, fmt.Sprintf("edge %s: %v", result.address, result.err))
+		}
+	}
+	if len(failures) > 0 {
+		slices.Sort(failures)
+		return ProbeResult{Reachable: false, Detail: strings.Join(failures, "; ")}, nil
+	}
+	return ProbeResult{Reachable: true, PathMTUMeasured: false}, nil
+}
+
+func probeEdge(ctx context.Context, address netip.Addr, request ProbeRequest) error {
+	if !address.Is4() {
+		return fmt.Errorf("address is not IPv4")
+	}
 	dialer := &net.Dialer{}
-	connection, err := dialer.DialContext(probeContext, "tcp4", netip.AddrPortFrom(p.address, request.Port).String())
+	connection, err := dialer.DialContext(ctx, "tcp4", netip.AddrPortFrom(address, request.Port).String())
 	if err != nil {
-		return ProbeResult{}, fmt.Errorf("connect to the edge at %s: %w", p.address, err)
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer func() { _ = connection.Close() }()
 
@@ -49,14 +88,21 @@ func (p *EdgeProber) Probe(ctx context.Context, request ProbeRequest) (ProbeResu
 	// carries traffic, not whether the chain is trusted, and check judges the
 	// certificate separately.
 	client := tls.Client(connection, &tls.Config{ServerName: request.ServerName, InsecureSkipVerify: true})
-	if err := client.HandshakeContext(probeContext); err != nil {
-		return ProbeResult{Reachable: false}, nil
+	if err := client.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("TLS handshake: %w", err)
 	}
 	_ = client.Close()
-	return ProbeResult{Reachable: true, PathMTUMeasured: false}, nil
+	return nil
 }
 
 // Describe names the vantage a report was verified from.
 func (p *EdgeProber) Describe() string {
-	return "the IPv4 edge at " + p.address.String()
+	addresses := make([]string, 0, len(p.addresses))
+	for _, address := range p.addresses {
+		addresses = append(addresses, address.String())
+	}
+	if len(addresses) == 1 {
+		return "the IPv4 edge at " + addresses[0]
+	}
+	return "the IPv4 edges at " + strings.Join(addresses, ", ")
 }

@@ -31,6 +31,9 @@ const (
 	VerificationNone Verification = "none"
 	// VerificationExternal means an external vantage reached the service.
 	VerificationExternal Verification = "external"
+	// VerificationPartial means an external vantage reached some, but not all,
+	// services. It is never sufficient for a strict deployment check.
+	VerificationPartial Verification = "partial"
 	// VerificationUnreachable means an external vantage tried and failed.
 	VerificationUnreachable Verification = "unreachable"
 )
@@ -46,6 +49,7 @@ type Report struct {
 // so the verdict cannot drift from the evidence.
 func (r *Report) classifyVerification() {
 	r.Verification = VerificationNone
+	var reached, inconclusive int
 	for _, finding := range r.Findings {
 		if finding.Check != "external" {
 			continue
@@ -55,8 +59,15 @@ func (r *Report) classifyVerification() {
 			r.Verification = VerificationUnreachable
 			return
 		case SeverityInfo:
-			r.Verification = VerificationExternal
+			reached++
+		case SeverityWarning:
+			inconclusive++
 		}
+	}
+	if reached > 0 && inconclusive == 0 {
+		r.Verification = VerificationExternal
+	} else if reached > 0 {
+		r.Verification = VerificationPartial
 	}
 }
 

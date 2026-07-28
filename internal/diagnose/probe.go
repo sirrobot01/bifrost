@@ -19,11 +19,18 @@ type ProbeRequest struct {
 	// ServerName lets a prober that dispatches on TLS names reach the right
 	// service. Probers that dial the address directly ignore it.
 	ServerName string `json:"server_name,omitempty"`
+	// EdgeAddresses is local routing context. It is never sent to an HTTP
+	// probe; an edge prober uses its presence to limit itself to services that
+	// are actually published through the edge.
+	EdgeAddresses []netip.Addr `json:"-"`
 }
 
 type ProbeResult struct {
 	Reachable bool `json:"reachable"`
-	PathMTU   int  `json:"path_mtu,omitempty"`
+	// Detail identifies the failed path when a prober checks more than one
+	// operator-controlled vantage, such as an IPv4 edge pool.
+	Detail  string `json:"detail,omitempty"`
+	PathMTU int    `json:"path_mtu,omitempty"`
 	// PathMTUMeasured distinguishes "the probe found no blackhole" from "the
 	// probe never looked", so a prober that only tests reachability does not
 	// produce a false PMTU verdict.
@@ -33,6 +40,10 @@ type ProbeResult struct {
 
 type ExternalProber interface {
 	Probe(context.Context, ProbeRequest) (ProbeResult, error)
+}
+
+type selectiveProber interface {
+	Supports(ProbeRequest) bool
 }
 
 type HTTPProber struct {
@@ -83,7 +94,5 @@ func (p *HTTPProber) Probe(ctx context.Context, request ProbeRequest) (ProbeResu
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return ProbeResult{}, fmt.Errorf("decode probe response: %w", err)
 	}
-	// A remote probe reports path MTU, so its verdict on Packet Too Big counts.
-	result.PathMTUMeasured = true
 	return result, nil
 }

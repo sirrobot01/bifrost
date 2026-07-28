@@ -24,7 +24,7 @@ func TestHTTPProber(t *testing.T) {
 		if probeRequest.Address != netip.MustParseAddr("2001:db8::1") || probeRequest.Port != 443 {
 			t.Errorf("request = %+v", probeRequest)
 		}
-		_ = json.NewEncoder(writer).Encode(ProbeResult{Reachable: true, PathMTU: 1492, PacketTooBigWorks: true})
+		_ = json.NewEncoder(writer).Encode(ProbeResult{Reachable: true, PathMTU: 1492, PathMTUMeasured: true, PacketTooBigWorks: true})
 	}))
 	defer server.Close()
 
@@ -36,8 +36,28 @@ func TestHTTPProber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Reachable || result.PathMTU != 1492 || !result.PacketTooBigWorks {
+	if !result.Reachable || result.PathMTU != 1492 || !result.PathMTUMeasured || !result.PacketTooBigWorks {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestHTTPProberDoesNotInventAPMTUMeasurement(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(ProbeResult{Reachable: true})
+	}))
+	defer server.Close()
+	prober, err := NewHTTPProber(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := prober.Probe(t.Context(), ProbeRequest{Address: netip.MustParseAddr("2001:db8::1"), Port: 443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PathMTUMeasured {
+		t.Fatal("a reachability-only response was promoted to a PMTU measurement")
 	}
 }
 

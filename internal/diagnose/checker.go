@@ -21,6 +21,9 @@ type Service struct {
 	// TLS marks services whose listener terminates TLS, so check can judge
 	// the served certificate.
 	TLS bool
+	// EdgeAddresses is non-empty only when this service is published through
+	// the configured IPv4 edge pool.
+	EdgeAddresses []netip.Addr
 }
 
 type Input struct {
@@ -200,17 +203,22 @@ func (c *Checker) serviceFindings(ctx context.Context, service Service, local ma
 
 	findings = append(findings, c.dnsFinding(ctx, service))
 
-	if prober == nil {
+	request := ProbeRequest{Address: service.Address, Port: service.Port, ServerName: service.DNSName, EdgeAddresses: service.EdgeAddresses}
+	supported := prober != nil
+	if selector, ok := prober.(selectiveProber); ok {
+		supported = selector.Supports(request)
+	}
+	if !supported {
 		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external reachability and PMTU were not tested", Remediation: "configure an explicit external probe endpoint to distinguish router filtering from host state"})
 		return findings
 	}
-	result, err := prober.Probe(ctx, ProbeRequest{Address: service.Address, Port: service.Port, ServerName: service.DNSName})
+	result, err := prober.Probe(ctx, request)
 	if err != nil {
 		findings = append(findings, Finding{Check: "external", Severity: SeverityWarning, Service: service.Name, Summary: "external probe failed", Detail: err.Error()})
 		return findings
 	}
 	if !result.Reachable {
-		findings = append(findings, Finding{Check: "external", Severity: SeverityError, Service: service.Name, Summary: "service is not reachable from the external probe", Remediation: "if local address, listener, and host policy are correct, inspect the customer-edge router IPv6 firewall"})
+		findings = append(findings, Finding{Check: "external", Severity: SeverityError, Service: service.Name, Summary: "service is not reachable from every external path", Detail: result.Detail, Remediation: "if local address, listener, and host policy are correct, inspect the named edge and the customer-edge router IPv6 firewall"})
 		return findings
 	}
 	findings = append(findings, Finding{Check: "external", Severity: SeverityInfo, Service: service.Name, Summary: "service answered from outside this network"})

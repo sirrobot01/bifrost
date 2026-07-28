@@ -146,6 +146,13 @@ func TestWriteCheckSummary(t *testing.T) {
 			want:         "answered from outside this network",
 		},
 		{
+			name:         "partially externally verified",
+			verification: diagnose.VerificationPartial,
+			findings:     []diagnose.Finding{{Severity: diagnose.SeverityInfo}, {Severity: diagnose.SeverityWarning}},
+			want:         "some services answered from outside this network",
+			wantCaveat:   true,
+		},
+		{
 			name:         "warnings only",
 			verification: diagnose.VerificationNone,
 			findings:     []diagnose.Finding{{Check: "mtu", Severity: diagnose.SeverityWarning}, {Check: "privileges", Severity: diagnose.SeverityWarning}},
