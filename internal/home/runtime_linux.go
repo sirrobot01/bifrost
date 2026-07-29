@@ -15,12 +15,14 @@ import (
 
 	"github.com/sirrobot01/bifrost/internal/certauto"
 	"github.com/sirrobot01/bifrost/internal/config"
+	"github.com/sirrobot01/bifrost/internal/diagnose"
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
 	"github.com/sirrobot01/bifrost/internal/edgeauth"
 	"github.com/sirrobot01/bifrost/internal/exposure"
 	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
+	"github.com/sirrobot01/bifrost/internal/notify"
 	"github.com/sirrobot01/bifrost/internal/observability"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
@@ -34,6 +36,9 @@ type Runtime struct {
 	publisher    *dnspublish.Reconciler
 	certificates *certauto.Manager
 	docker       *dockerwatch.Client
+	verifier     *verifier
+	notifier     notify.Notifier
+	webhook      *notify.Webhook
 	logger       *slog.Logger
 	metrics      *observability.Server
 	stateMu      sync.RWMutex
@@ -41,6 +46,7 @@ type Runtime struct {
 	lastRun      time.Time
 	lastError    string
 	ready        bool
+	lastPrefix   netip.Prefix
 }
 
 func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error) {
@@ -168,7 +174,51 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 			return nil, err
 		}
 	}
-	runtime := &Runtime{config: configFile, pinholes: pinholes, observer: observer, controller: controller, services: services, publisher: publisher, certificates: certificates, docker: dockerClient, logger: logger, startedAt: time.Now()}
+	// Notifications reach an operator who is not watching a metrics endpoint,
+	// which is most of them. Delivery is asynchronous so a slow endpoint can
+	// never stall reconciliation.
+	var notifier notify.Notifier = notify.Discard{}
+	var webhook *notify.Webhook
+	if configFile.Notify.Webhook != "" {
+		webhook, err = notify.NewWebhook(notify.Config{
+			Endpoint:    configFile.Notify.Webhook,
+			Format:      configFile.Notify.Format,
+			MinInterval: configFile.Notify.MinInterval.Duration(),
+			Logger:      logger,
+		})
+		if err != nil {
+			return nil, err
+		}
+		notifier = webhook
+	}
+
+	// The daemon keeps asking the question `check` only answers during setup.
+	// Without a prober there is no evidence and therefore no verdict; the
+	// verifier reports nothing rather than something reassuring.
+	var externalVerifier *verifier
+	if configFile.VerificationEnabled() {
+		edgeAddresses := make([]netip.Addr, 0, len(configFile.Edge.IPv4Addresses))
+		if configFile.Edge.Enabled {
+			for _, raw := range configFile.Edge.IPv4Addresses {
+				address, parseErr := netip.ParseAddr(raw)
+				if parseErr != nil {
+					return nil, fmt.Errorf("edge.ipv4_addresses %q: %w", raw, parseErr)
+				}
+				edgeAddresses = append(edgeAddresses, address)
+			}
+		}
+		prober, proberErr := diagnose.SelectProber(configFile.Probe.Endpoint, edgeAddresses)
+		if proberErr != nil {
+			return nil, proberErr
+		}
+		if prober == nil {
+			logger.Warn("no external prober is configured, so reachability cannot be verified from outside this host",
+				"fix", "enable an edge or set probe.endpoint")
+		}
+		externalVerifier = newVerifier(prober, notifier, logger)
+	}
+
+	runtime := &Runtime{config: configFile, pinholes: pinholes, observer: observer, controller: controller, services: services, publisher: publisher, certificates: certificates, docker: dockerClient, verifier: externalVerifier, notifier: notifier, webhook: webhook, logger: logger, startedAt: time.Now()}
 	metricsServer, err := observability.NewServer(configFile.Metrics.Listen, runtime.observabilitySnapshot)
 	if err != nil {
 		return nil, err
@@ -217,6 +267,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}()
 	metricsResult := make(chan error, 1)
 	go func() { metricsResult <- r.metrics.Run(ctx) }()
+	if r.webhook != nil {
+		go func() { _ = r.webhook.Run(ctx) }()
+	}
 	dockerChanges := make(chan struct{}, 1)
 	if r.docker != nil {
 		go r.watchDocker(ctx, dockerChanges)
@@ -233,6 +286,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer dockerResync.Stop()
 	certificateRenewal := time.NewTicker(time.Hour)
 	defer certificateRenewal.Stop()
+	// The first check runs one interval in, which gives DNS and the edge time
+	// to converge after a start. Probing immediately would report an outage
+	// that is really just a cold start.
+	externalCheck := time.NewTicker(r.config.Verify.Interval.Duration())
+	defer externalCheck.Stop()
 	var latest netwatch.Snapshot
 	pending := false
 	consecutiveFailures := 0
@@ -303,7 +361,19 @@ func (r *Runtime) Run(ctx context.Context) error {
 				r.logger.Info("renewed certificate", "name", name)
 			}
 			if err != nil {
+				// Renewal begins 30 days before expiry, so this has weeks of
+				// headroom. Saying so now is the difference between a warning
+				// and an outage.
 				r.logger.Error("certificate renewal failed", "error", err)
+				r.notifier.Notify(notify.Event{
+					Kind:    notify.CertificateRenewalFailed,
+					Summary: "certificate renewal failed",
+					Detail:  err.Error(),
+				})
+			}
+		case <-externalCheck.C:
+			if !pending {
+				r.verifier.Verify(ctx, r.verifyTargets())
 			}
 		case <-settleTimer.C:
 			if pending {
@@ -312,6 +382,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 					delay := reconcileBackoff(r.config.SettleWindow.Duration(), consecutiveFailures)
 					r.markReconcile(err)
 					r.logger.Error("service reconciliation failed", "error", err, "retry_in", delay.String())
+					r.notifier.Notify(notify.Event{
+						Kind:    notify.ReconcileFailed,
+						Summary: "service reconciliation failed",
+						Detail:  err.Error(),
+					})
 					settleTimer.Reset(delay)
 					continue
 				}
@@ -334,6 +409,31 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// verifyTargets is the published state as it currently stands, which is what an
+// outside vantage would be reaching. It deliberately reads the controller
+// rather than the configuration: a service that failed to come up has no
+// address to probe, and reporting it unreachable would blame the network for a
+// local failure the reconcile error already covers.
+func (r *Runtime) verifyTargets() []verifyTarget {
+	statuses := r.controller.Status()
+	targets := make([]verifyTarget, 0, len(statuses))
+	for _, status := range statuses {
+		for _, address := range status.Addresses {
+			targets = append(targets, verifyTarget{
+				Service: status.ID,
+				DNSName: status.DNSName,
+				Address: address,
+				Port:    status.ListenPort,
+			})
+			// One address is enough to prove the path. Probing every address
+			// during a renumbering overlap would report the retiring one as a
+			// failure while it is being drained on purpose.
+			break
+		}
+	}
+	return targets
 }
 
 func (r *Runtime) refreshServices(ctx context.Context) error {
@@ -384,6 +484,15 @@ func (r *Runtime) observabilitySnapshot() observability.Snapshot {
 	r.stateMu.RLock()
 	snapshot := observability.Snapshot{Ready: r.ready, StartedAt: r.startedAt, LastReconcile: r.lastRun, LastError: r.lastError}
 	r.stateMu.RUnlock()
+	for _, state := range r.verifier.States() {
+		snapshot.Reachability = append(snapshot.Reachability, observability.Reachability{
+			Service:   state.Service,
+			Reachable: state.Reachable,
+			Detail:    state.Detail,
+			CheckedAt: state.CheckedAt,
+		})
+	}
+	slices.SortFunc(snapshot.Reachability, func(a, b observability.Reachability) int { return cmp.Compare(a.Service, b.Service) })
 	if r.certificates != nil {
 		for name, expiry := range r.certificates.Expiries() {
 			snapshot.Certificates = append(snapshot.Certificates, observability.Certificate{Name: name, NotAfter: expiry})
@@ -427,7 +536,31 @@ func (r *Runtime) reconcile(ctx context.Context, snapshot netwatch.Snapshot) err
 		return err
 	}
 	r.logActions(actions)
+	r.notePrefix()
 	return nil
+}
+
+// notePrefix reports a prefix change once. It is worth a notification because
+// it explains anything that follows it: a renumbering bounded by a provider's
+// minimum TTL looks like an unexplained outage without this line.
+func (r *Runtime) notePrefix() {
+	current := r.controller.SelectedPrefix()
+	if !current.IsValid() {
+		return
+	}
+	r.stateMu.Lock()
+	previous := r.lastPrefix
+	r.lastPrefix = current
+	r.stateMu.Unlock()
+	if !previous.IsValid() || previous == current {
+		return
+	}
+	r.logger.Info("published prefix changed", "from", previous.String(), "to", current.String())
+	r.notifier.Notify(notify.Event{
+		Kind:    notify.PrefixChanged,
+		Summary: "the published IPv6 prefix changed",
+		Detail:  previous.String() + " to " + current.String(),
+	})
 }
 
 func (r *Runtime) logActions(actions []Action) {

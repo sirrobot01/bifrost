@@ -59,9 +59,13 @@ Calls to DNS providers, the ACME certificate authority, Docker, and any configur
 | `bifrost_ready` | 1 once reconciliation has succeeded. |
 | `bifrost_services` | Published services. |
 | `bifrost_certificate_expiry_seconds` | Per name, expiry as a Unix timestamp. |
+| `bifrost_external_reachable` | Per service, 1 when it answered from outside at the last check. Absent when nothing can look from outside. |
+| `bifrost_external_checked_seconds` | Per service, when that check last ran. |
 | `bifrost_connections_active` | Connections currently spliced. |
 | `bifrost_connections_accepted_total` | Accepted connections. |
 | `bifrost_connections_rejected_total` | Rejected connections. |
 | `bifrost_backend_dial_failures_total` | Failures dialling a backend. |
 
-Alert on `bifrost_certificate_expiry_seconds`. Renewal starts 30 days out, so a value inside two weeks means renewals have been failing silently.
+Alert on `bifrost_external_reachable` and `bifrost_certificate_expiry_seconds`, or configure `notify.webhook` and skip the metrics stack entirely.
+
+Alerting on `bifrost_certificate_expiry_seconds`: Renewal starts 30 days out, so a value inside two weeks means renewals have been failing silently.

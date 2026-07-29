@@ -53,6 +53,8 @@ type Config struct {
 	DNS            DNS             `yaml:"dns"`
 	Firewall       Firewall        `yaml:"firewall"`
 	Probe          Probe           `yaml:"probe"`
+	Verify         Verify          `yaml:"verify,omitempty"`
+	Notify         Notify          `yaml:"notify,omitempty"`
 	Metrics        Metrics         `yaml:"metrics"`
 	Docker         Docker          `yaml:"docker"`
 	Edge           Edge            `yaml:"edge"`
@@ -127,6 +129,38 @@ func (f Firewall) Managed() bool {
 
 type Probe struct {
 	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
+// Verify controls the daemon's own reachability checks. `check` answers the
+// same question once, during setup; this keeps answering it afterwards, which
+// is when an outage actually starts.
+type Verify struct {
+	// Enabled defaults to true whenever a prober exists. A pointer
+	// distinguishes "not configured" from "explicitly off", so the default can
+	// be on without taking away the ability to turn it off.
+	Enabled  *bool    `yaml:"enabled,omitempty"`
+	Interval Duration `yaml:"interval,omitempty"`
+}
+
+// Notify posts operational events to an endpoint the operator chooses. Metrics
+// only reach operators who run a metrics stack; this reaches the rest.
+type Notify struct {
+	Webhook string `yaml:"webhook,omitempty"`
+	// Format is "json", which includes a `content` field so a Discord webhook
+	// works unmodified, or "text" for ntfy and anything that treats the body as
+	// the message.
+	Format string `yaml:"format,omitempty"`
+	// MinInterval suppresses a repeat of the same event for the same service,
+	// so a flapping service cannot become a notification loop.
+	MinInterval Duration `yaml:"min_interval,omitempty"`
+}
+
+// VerificationEnabled reports whether the periodic check should run.
+func (c Config) VerificationEnabled() bool {
+	if c.Verify.Enabled != nil {
+		return *c.Verify.Enabled
+	}
+	return true
 }
 
 type Metrics struct {
@@ -220,6 +254,17 @@ func (c *Config) ApplyDefaults() {
 	if c.Docker.Socket == "" {
 		c.Docker.Socket = "/var/run/docker.sock"
 	}
+	if c.Verify.Interval == 0 {
+		// Slow on purpose. This detects an outage; it is not a health check in
+		// the request path, and it dials through someone's edge.
+		c.Verify.Interval = Duration(5 * time.Minute)
+	}
+	if c.Notify.Format == "" {
+		c.Notify.Format = "json"
+	}
+	if c.Notify.MinInterval == 0 {
+		c.Notify.MinInterval = Duration(30 * time.Minute)
+	}
 	if c.Edge.IPv4Address != "" && !slices.Contains(c.Edge.IPv4Addresses, c.Edge.IPv4Address) {
 		c.Edge.IPv4Addresses = append([]string{c.Edge.IPv4Address}, c.Edge.IPv4Addresses...)
 	}
@@ -258,6 +303,17 @@ func (c Config) Validate() error {
 	}
 	if c.Interface == "" {
 		return errors.New("interface is required")
+	}
+	if interval := c.Verify.Interval.Duration(); interval < time.Minute || interval > 24*time.Hour {
+		return errors.New("verify.interval must be between 1m and 24h")
+	}
+	if c.Notify.Webhook != "" {
+		if parsed, err := url.Parse(c.Notify.Webhook); err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return errors.New("notify.webhook must be an absolute HTTPS URL")
+		}
+	}
+	if c.Notify.Format != "json" && c.Notify.Format != "text" {
+		return fmt.Errorf("notify.format %q must be json or text", c.Notify.Format)
 	}
 	if c.OwnerID == "" {
 		return errors.New("owner_id is required")

@@ -27,6 +27,16 @@ type Service struct {
 	DialFailures      uint64         `json:"dial_failures_total"`
 }
 
+// Reachability reports whether one service answered from outside the network.
+// It is absent when nothing can look from outside, because a deployment with no
+// external vantage must not export an optimistic verdict.
+type Reachability struct {
+	Service   string    `json:"service"`
+	Reachable bool      `json:"reachable"`
+	Detail    string    `json:"detail,omitempty"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
 // Certificate reports one managed certificate's expiry, so a failing renewal
 // is visible to monitoring rather than only to a later handshake failure.
 type Certificate struct {
@@ -35,12 +45,13 @@ type Certificate struct {
 }
 
 type Snapshot struct {
-	Ready         bool          `json:"ready"`
-	StartedAt     time.Time     `json:"started_at"`
-	LastReconcile time.Time     `json:"last_reconcile,omitempty"`
-	LastError     string        `json:"last_error,omitempty"`
-	Services      []Service     `json:"services"`
-	Certificates  []Certificate `json:"certificates,omitempty"`
+	Ready         bool           `json:"ready"`
+	StartedAt     time.Time      `json:"started_at"`
+	LastReconcile time.Time      `json:"last_reconcile,omitempty"`
+	LastError     string         `json:"last_error,omitempty"`
+	Services      []Service      `json:"services"`
+	Certificates  []Certificate  `json:"certificates,omitempty"`
+	Reachability  []Reachability `json:"reachability,omitempty"`
 }
 
 type Server struct {
@@ -126,6 +137,19 @@ func metrics(snapshot Snapshot) string {
 		output.WriteString("# HELP bifrost_certificate_expiry_seconds Unix time when a managed certificate expires.\n# TYPE bifrost_certificate_expiry_seconds gauge\n")
 		for _, certificate := range snapshot.Certificates {
 			fmt.Fprintf(&output, "bifrost_certificate_expiry_seconds{name=%s} %d\n", strconv.Quote(certificate.Name), certificate.NotAfter.Unix())
+		}
+	}
+	if len(snapshot.Reachability) > 0 {
+		output.WriteString("# HELP bifrost_external_reachable Whether a service answered from outside this network at the last check.\n# TYPE bifrost_external_reachable gauge\n")
+		output.WriteString("# HELP bifrost_external_checked_seconds Unix time of the last external reachability check.\n# TYPE bifrost_external_checked_seconds gauge\n")
+		for _, reachability := range snapshot.Reachability {
+			reachable := 0
+			if reachability.Reachable {
+				reachable = 1
+			}
+			label := "{service=" + strconv.Quote(reachability.Service) + "}"
+			fmt.Fprintf(&output, "bifrost_external_reachable%s %d\n", label, reachable)
+			fmt.Fprintf(&output, "bifrost_external_checked_seconds%s %d\n", label, reachability.CheckedAt.Unix())
 		}
 	}
 	for _, service := range snapshot.Services {

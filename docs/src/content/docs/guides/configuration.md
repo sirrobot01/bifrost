@@ -69,6 +69,11 @@ static_services:
 | `firewall.allow_ports` | none | Managed mode only. Extra inbound TCP ports on every address. Put SSH here if you administer the host over IPv6. |
 | `firewall.pcp` | `false` | Ask the router to open each published socket. Most routers do not answer, and nothing changes when they do not. |
 | `probe.endpoint` | none | An HTTPS probe URL. An enabled edge already serves this purpose. |
+| `verify.enabled` | `true` | Keep checking external reachability while the daemon runs. |
+| `verify.interval` | `5m` | Between 1m and 24h. |
+| `notify.webhook` | none | HTTPS URL receiving operational events. |
+| `notify.format` | `json` | `json` includes a `content` field, so a Discord webhook works unmodified; `text` suits ntfy. |
+| `notify.min_interval` | `30m` | Suppresses a repeat of the same event for the same service. |
 | `metrics.listen` | `127.0.0.1:9098` | Must be loopback. |
 | `docker.socket` | `/var/run/docker.sock` | Only read when `docker.enabled` is set. |
 | `acme.state_dir` | `/var/lib/bifrost` | Where certificates and the account key are kept. |
@@ -324,6 +329,31 @@ static_maps:
 | `static_maps` | Map an edge port to one DNS name and home port. |
 
 Each `allow` entry must be a DNS name. Each static map target must contain a DNS name and port. A static map port must not equal the TLS listener port.
+
+## Watch a running deployment
+
+`check` answers whether services are reachable once, while you are setting the host up. The daemon keeps asking:
+
+```yaml
+verify:
+  interval: 5m
+
+notify:
+  webhook: https://ntfy.sh/your-topic
+  format: text
+```
+
+With an [edge](../../networking/edge/) or a `probe.endpoint`, each service is probed from outside every `verify.interval`. The result appears as `bifrost_external_reachable{service}` and in `/status`. Without either, no verdict is exported at all — an absent metric rather than an optimistic one.
+
+Only transitions are reported. A service that has been reachable for a month produces nothing; one that stops answering produces a single event, and one event again when it recovers. `notify.min_interval` bounds repeats, and recovery is never suppressed by the outage that preceded it.
+
+Events sent: external reachability lost and restored, certificate renewal failure, reconciliation failure, and prefix change. The prefix one matters because it explains whatever follows it.
+
+:::caution
+Event details carry error text from DNS providers and the certificate authority. Send them somewhere you control.
+:::
+
+Set `verify.enabled: false` to turn the checks off. They cost one TCP connection and TLS handshake per service per interval, made from your own edge.
 
 ## Check the configuration
 

@@ -69,6 +69,7 @@ type ServiceStatus struct {
 	ID                string         `json:"id"`
 	DNSName           string         `json:"dns"`
 	Mode              Mode           `json:"mode"`
+	ListenPort        uint16         `json:"listen_port"`
 	Addresses         []netip.Addr   `json:"addresses"`
 	EdgeAddresses     []netip.Addr   `json:"edge_addresses,omitempty"`
 	Backend           netip.AddrPort `json:"backend"`
@@ -120,6 +121,18 @@ type Controller struct {
 	// policy is not rewritten on every reconcile.
 	appliedFirewall hostfw.Spec
 	firewallApplied bool
+	// selectedPrefix is the prefix the last successful reconcile chose. It is
+	// read outside the lock, for the same reason status is.
+	selectedPrefix atomic.Pointer[netip.Prefix]
+}
+
+// SelectedPrefix reports the prefix currently published from, or the zero value
+// before the first successful reconcile.
+func (c *Controller) SelectedPrefix() netip.Prefix {
+	if prefix := c.selectedPrefix.Load(); prefix != nil {
+		return *prefix
+	}
+	return netip.Prefix{}
 }
 
 // applyFirewall writes the managed policy for the services in hand plus any
@@ -249,6 +262,9 @@ func (c *Controller) Reconcile(ctx context.Context, desired []Service, snapshot 
 	}
 
 	selection, selectionErr := c.selectPrefix(snapshot)
+	if selectionErr == nil {
+		c.selectedPrefix.Store(&selection.Prefix)
+	}
 	actions := c.expiredActions()
 	if !dryRun {
 		if err := c.retireExpired(ctx); err != nil {
@@ -419,7 +435,7 @@ func (c *Controller) Status() []ServiceStatus {
 	}
 	statuses := make([]ServiceStatus, 0, len(*snapshot))
 	for _, entry := range *snapshot {
-		status := ServiceStatus{ID: entry.spec.ID, DNSName: entry.spec.DNSName, Mode: entry.mode, Backend: entry.spec.Backend, ClientIPPreserved: entry.mode == ModeDirect}
+		status := ServiceStatus{ID: entry.spec.ID, DNSName: entry.spec.DNSName, Mode: entry.mode, ListenPort: entry.spec.ListenPort, Backend: entry.spec.Backend, ClientIPPreserved: entry.mode == ModeDirect}
 		status.EdgeAddresses = edgeAddresses(entry.spec)
 		for _, endpoint := range entry.endpoints {
 			status.Addresses = append(status.Addresses, endpoint.address)
