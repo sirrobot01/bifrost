@@ -64,7 +64,7 @@ static_services:
 | `settle_window` | `10s` | Delay after a network or Docker change. |
 | `drain_grace` | `2m` | Overlap and connection drain during a prefix change. |
 | `dns.ttl` | `60s` | Between 60s and 24h. |
-| `firewall.mode` | `advisory` | `managed` lets Bifrost own the inbound IPv6 policy on Linux; macOS supports `advisory`. |
+| `firewall.mode` | `advisory` | `managed` lets Bifrost own the inbound IPv6 policy on Linux; macOS and the BSDs support `advisory`. |
 | `firewall.trusted_interfaces` | none | Managed mode only. Interfaces accepted in full, such as a VPN link. |
 | `firewall.allow_ports` | none | Managed mode only. Extra inbound TCP ports on every address. Put SSH here if you administer the host over IPv6. |
 | `firewall.pcp` | `false` | Ask the router to open each published socket. Most routers do not answer, and nothing changes when they do not. |
@@ -75,7 +75,7 @@ static_services:
 | `notify.format` | `json` | `json` includes a `content` field, so a Discord webhook works unmodified; `text` suits ntfy. |
 | `notify.min_interval` | `30m` | Suppresses a repeat of the same event for the same service. |
 | `metrics.listen` | `127.0.0.1:9098` | Must be loopback. |
-| `docker.socket` | `/var/run/docker.sock` | Only read when `docker.enabled` is set. Set Docker Desktop's actual Unix socket on macOS. |
+| `docker.socket` | `/var/run/docker.sock` | Linux and macOS only. Set Docker Desktop's actual Unix socket on macOS. Docker discovery is rejected on FreeBSD and OpenBSD. |
 | `acme.state_dir` | `/var/lib/bifrost` | Where certificates and the account key are kept. |
 
 Do not change `owner_id` after Bifrost creates DNS records: a new ID does not own the old ones. Do not change the address secret unless you want new splice addresses.

@@ -9,7 +9,7 @@ One command installs the latest release:
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-The script detects the operating system, CPU, and package manager, verifies the download against the release checksum file, and installs the deb or rpm package on Linux. On macOS, or where no Linux package manager fits, it installs the archive binary to `/usr/local/bin` and prints the remaining service setup steps.
+The script detects the operating system, CPU, and package manager, verifies the download against the release checksum file, and installs the deb or rpm package on Linux. On macOS, FreeBSD, OpenBSD, or where no Linux package fits, it installs the archive binary and native service definition without enabling it.
 
 The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0755`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
@@ -23,7 +23,7 @@ The rest of this page covers the alternatives to the script, release verificatio
 
 Every method ends in the same place. Pick the one that fits how you manage the host.
 
-Linux builds cover three CPUs; macOS builds cover Intel and Apple silicon. Packages use the first suffix, archives the second:
+Linux builds cover three CPUs; macOS, FreeBSD, and OpenBSD cover x86-64 and ARM64. Packages use the first suffix, archives the second:
 
 | CPU | Package suffix | Archive suffix |
 |---|---|---|
@@ -48,6 +48,32 @@ sudo launchctl kill HUP system/dev.biodun.bifrost
 ```
 
 macOS supports advisory firewall mode. Keep `firewall.mode: advisory` and add the required address-and-port rules to the host policy yourself. `firewall.pcp` remains available when the router supports PCP. Docker discovery works with a configured Unix socket; Docker Desktop commonly uses a per-user socket, so set `docker.socket` explicitly when enabling it.
+
+### FreeBSD
+
+The script installs `/usr/local/etc/rc.d/bifrost` and `bifrost-edge`. Create the configuration, then enable the home service:
+
+```sh
+sudo install -d -m 0755 /etc/bifrost /var/lib/bifrost
+sudo bifrost init --interactive
+sudo sysrc bifrost_enable=YES
+sudo service bifrost start
+```
+
+Reload with `sudo service bifrost reload`. FreeBSD uses advisory firewall mode; add the published address and port to the `pf` or `ipfw` policy that owns inbound filtering. Docker discovery is unavailable.
+
+### OpenBSD
+
+The script installs `/etc/rc.d/bifrost` and `bifrost_edge`. Create the configuration, then enable the home service:
+
+```sh
+doas install -d -m 0755 /etc/bifrost /var/lib/bifrost
+doas bifrost init --interactive
+doas rcctl enable bifrost
+doas rcctl start bifrost
+```
+
+Reload with `doas rcctl reload bifrost`. OpenBSD uses advisory `pf` mode and does not support Docker discovery.
 
 ### Download the package directly
 
@@ -134,7 +160,7 @@ sudo bifrost upgrade
 
 This downloads the latest release archive, verifies it against the release checksum file, and replaces the running binary in place. `/etc/bifrost` is never touched. Add `--check` to compare versions without installing anything, or `--restart` to restart whichever units are running once the new binary is in place.
 
-Without `--restart`, the command prints what to restart. The old binary keeps serving until you do:
+Without `--restart`, the command prints the native restart command. The old binary keeps serving until you do. On Linux:
 
 ```sh
 sudo systemctl restart bifrost          # home

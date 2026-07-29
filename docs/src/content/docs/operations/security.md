@@ -13,7 +13,7 @@ Every published backend must provide its own authentication, updates, and rate c
 - The address secret creates stable splice addresses. Its value does not grant DNS access. Rotation changes the generated addresses.
 - The edge key authenticates edge metadata. Do not reuse the DNS credential or address secret as the edge key.
 - Access to the Docker socket is equivalent to root access. A read-only filesystem mount does not limit Docker API methods.
-- Linux `CAP_NET_ADMIN` and a root macOS launch daemon can change host networking. Use the supplied service definition and keep configuration ownership narrow.
+- Linux `CAP_NET_ADMIN` and root services on macOS or BSD can change host networking. Use the supplied service definition and keep configuration ownership narrow.
 - An HTTPS probe endpoint receives each tested public address, port, and published DNS name. Configure one only when you accept its privacy policy. An enabled edge acts as the prober instead, which keeps the question inside infrastructure you run.
 
 ## Keep DNS ownership separate

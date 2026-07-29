@@ -21,7 +21,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## What Bifrost does
 
-Bifrost runs natively on a Linux or macOS host in your home network. It watches the IPv6 prefix on that host, creates service addresses, updates DNS records, and checks the inbound path.
+Bifrost runs natively on Linux, macOS, FreeBSD, and OpenBSD. It watches the IPv6 prefix on that host, creates service addresses, updates DNS records, and checks the inbound path.
 
 Bifrost supports three service modes:
 
@@ -50,7 +50,7 @@ An optional edge accepts IPv4 traffic on a public server. The edge sends that tr
 
 The home role requires these items:
 
-- A supported Linux or macOS host
+- A supported Linux, macOS, FreeBSD, or OpenBSD host
 - A global IPv6 `/64` on that host
 - Permission to add IPv6 addresses
 - Permission to bind the public TCP ports

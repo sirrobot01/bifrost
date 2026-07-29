@@ -3,7 +3,7 @@ title: Quickstart
 description: Publish one service through native IPv6, from an unconfigured host to a working name.
 ---
 
-This Linux worked example publishes one Jellyfin server at `media.example.com`. The server listens on `127.0.0.1:8096`; the connection has global IPv6 and CGNAT IPv4, and DNS is on Cloudflare. The reconciliation steps are the same on macOS; use the launchd commands in [installation](../installation/#macos) instead of systemd.
+This Linux worked example publishes one Jellyfin server at `media.example.com`. The server listens on `127.0.0.1:8096`; the connection has global IPv6 and CGNAT IPv4, and DNS is on Cloudflare. The reconciliation steps are the same on macOS and the BSDs; use the native service commands in [installation](../installation/) instead of systemd.
 
 Substitute your own name, backend, and provider. The sequence does not change.
 
@@ -11,7 +11,7 @@ Substitute your own name, backend, and provider. The sequence does not change.
 
 You need three things:
 
-- A supported Linux or macOS host on a connection with global IPv6.
+- A supported Linux, macOS, FreeBSD, or OpenBSD host on a connection with global IPv6.
 - A DNS name you control, on Cloudflare, deSEC, dynv6, or an RFC 2136 server.
 - Access to your router to permit inbound IPv6.
 
@@ -21,7 +21,7 @@ You need three things:
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-The script downloads the latest native release for this machine and verifies its checksum. On Linux it installs the deb or rpm package; on macOS it installs the archive binary and points to the launchd setup. It starts nothing, so installation cannot change DNS or host addresses.
+The script downloads the latest native release for this machine and verifies its checksum. On Linux it installs the deb or rpm package; on macOS and the BSDs it installs the archive binary and native service definitions. It starts nothing, so installation cannot change DNS or host addresses.
 
 See [installation](../installation/) for direct package downloads, archives, containers, and signature verification.
 

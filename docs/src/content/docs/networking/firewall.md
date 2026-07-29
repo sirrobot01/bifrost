@@ -3,11 +3,11 @@ title: Firewall and path MTU
 description: Scope inbound IPv6 to the published services and keep essential ICMPv6 working.
 ---
 
-Two firewalls sit in front of a published service. Bifrost can manage the Linux host firewall. On macOS it leaves the host policy advisory. It can ask the router through PCP on both systems, but cannot insist.
+Two firewalls sit in front of a published service. Bifrost can manage the Linux host firewall. On macOS, FreeBSD, and OpenBSD it leaves host policy advisory. It can ask the router through PCP on every supported system, but cannot insist.
 
 ## Managed mode
 
-Managed mode currently requires Linux with nftables. macOS refuses this mode because safely loading a Bifrost `pf` anchor also requires the administrator to attach that anchor to the host's primary ruleset; Bifrost never rewrites an unowned ruleset.
+Managed mode currently requires Linux with nftables. The BSD-family implementations refuse this mode because loading an effective `pf` or `ipfw` policy requires cooperation from the host's primary ruleset; Bifrost never rewrites an unowned ruleset.
 
 ```yaml
 firewall:
@@ -39,7 +39,7 @@ With `pcp: true`, Bifrost also asks the router to permit each published socket, 
 
 ## Advisory mode
 
-`firewall.mode: advisory` does not change policy. Linux additionally audits nftables; on macOS, inspect and maintain the system `pf` or application-firewall policy separately.
+`firewall.mode: advisory` does not change policy. Linux additionally audits nftables; on macOS and the BSDs, inspect and maintain the system firewall policy separately.
 
 Scope each rule to one service address and port:
 

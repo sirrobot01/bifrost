@@ -26,11 +26,13 @@ fail() {
 case "$(uname -s)" in
 Linux) release_os=linux ;;
 Darwin) release_os=darwin ;;
-*) fail "unsupported operating system $(uname -s); releases currently cover Linux and macOS" ;;
+FreeBSD) release_os=freebsd ;;
+OpenBSD) release_os=openbsd ;;
+*) fail "unsupported operating system $(uname -s); releases cover Linux, macOS, FreeBSD, and OpenBSD" ;;
 esac
 
 case "$(uname -m)" in
-x86_64) package_arch=amd64 archive_arch=x86_64 ;;
+amd64 | x86_64) package_arch=amd64 archive_arch=x86_64 ;;
 aarch64 | arm64) package_arch=arm64 archive_arch=aarch64 ;;
 armv7l) package_arch=armv7 archive_arch=armv7 ;;
 *) fail "unsupported CPU $(uname -m); releases cover x86_64, aarch64, and armv7" ;;
@@ -48,14 +50,24 @@ if command -v sha256sum >/dev/null 2>&1; then
 	verify_checksum() { grep " $1\$" "$workdir/checksums.txt" | (cd "$workdir" && sha256sum -c -); }
 elif command -v shasum >/dev/null 2>&1; then
 	verify_checksum() { grep " $1\$" "$workdir/checksums.txt" | (cd "$workdir" && shasum -a 256 -c -); }
+elif command -v sha256 >/dev/null 2>&1; then
+	verify_checksum() {
+		expected="$(awk -v artifact="$1" '$2 == artifact { print $1; exit }' "$workdir/checksums.txt")"
+		[ -n "$expected" ] && [ "$(sha256 -q "$workdir/$1")" = "$expected" ]
+	}
 else
-	fail "sha256sum or shasum is required to verify the download"
+	fail "sha256sum, shasum, or sha256 is required to verify the download"
 fi
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
-	command -v sudo >/dev/null 2>&1 || fail "run as root or install sudo"
-	SUDO="sudo"
+	if command -v sudo >/dev/null 2>&1; then
+		SUDO="sudo"
+	elif command -v doas >/dev/null 2>&1; then
+		SUDO="doas"
+	else
+		fail "run as root or install sudo/doas"
+	fi
 fi
 
 if [ "$release_os" = linux ] && command -v apt-get >/dev/null 2>&1; then
@@ -103,6 +115,10 @@ rpm)
 archive)
 	if [ "$release_os" = darwin ]; then
 		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost deploy/dev.biodun.bifrost.plist deploy/dev.biodun.bifrost-edge.plist
+	elif [ "$release_os" = freebsd ]; then
+		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost deploy/freebsd/bifrost deploy/freebsd/bifrost-edge
+	elif [ "$release_os" = openbsd ]; then
+		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost deploy/openbsd/bifrost deploy/openbsd/bifrost_edge
 	else
 		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost
 	fi
@@ -112,8 +128,16 @@ archive)
 		$SUDO install -m 0644 "$workdir/deploy/dev.biodun.bifrost.plist" /Library/LaunchDaemons/dev.biodun.bifrost.plist
 		$SUDO install -m 0644 "$workdir/deploy/dev.biodun.bifrost-edge.plist" /Library/LaunchDaemons/dev.biodun.bifrost-edge.plist
 		echo "installed launchd definitions without loading them"
+	elif [ "$release_os" = freebsd ]; then
+		$SUDO install -m 0755 "$workdir/deploy/freebsd/bifrost" /usr/local/etc/rc.d/bifrost
+		$SUDO install -m 0755 "$workdir/deploy/freebsd/bifrost-edge" /usr/local/etc/rc.d/bifrost-edge
+		echo "installed FreeBSD rc.d scripts without enabling them"
+	elif [ "$release_os" = openbsd ]; then
+		$SUDO install -m 0555 "$workdir/deploy/openbsd/bifrost" /etc/rc.d/bifrost
+		$SUDO install -m 0555 "$workdir/deploy/openbsd/bifrost_edge" /etc/rc.d/bifrost_edge
+		echo "installed OpenBSD rc.d scripts without enabling them"
 	fi
-	echo "the archive does not install an operating-system service;"
+	echo "the archive does not enable or start an operating-system service;"
 	echo "follow https://bifrost.biodun.dev/getting-started/installation/#install-from-an-archive"
 	;;
 esac
