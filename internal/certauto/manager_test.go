@@ -11,12 +11,15 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sirrobot01/bifrost/internal/config"
 )
 
 func selfSigned(t *testing.T, name string, notAfter time.Time) ([]byte, []byte) {
@@ -167,8 +170,11 @@ func TestManagerLoadsFromDiskAndProtectsKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %04o, want 0600", info.Mode().Perm())
+	}
+	if _, err := config.ReadSecret(stateDir + "/media.example.com.key"); err != nil {
+		t.Fatalf("key permissions: %v", err)
 	}
 }
 

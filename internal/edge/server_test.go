@@ -22,9 +22,7 @@ func TestEdgeForwardsAuthenticatedClientHello(t *testing.T) {
 
 	key := bytes.Repeat([]byte{0x42}, 32)
 	keyPath := filepath.Join(t.TempDir(), "edge.key")
-	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestKey(t, keyPath, key)
 	config := Config{Version: 1, Listen: "127.0.0.1:443", Allow: []string{"media.example.com"}, KeyFile: keyPath}
 	config.applyDefaults()
 	resolver := &fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("2001:4860::10")}, ttl: time.Minute}
@@ -80,9 +78,7 @@ func newAdmissionTestServer(t *testing.T, mutate func(*Config)) *Server {
 	t.Helper()
 
 	keyPath := filepath.Join(t.TempDir(), "edge.key")
-	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{0x42}, 32), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestKey(t, keyPath, bytes.Repeat([]byte{0x42}, 32))
 	config := Config{Version: 1, Listen: "127.0.0.1:443", Allow: []string{"media.example.com"}, KeyFile: keyPath}
 	config.applyDefaults()
 	if mutate != nil {
@@ -251,9 +247,7 @@ func TestEdgeFollowsPrefixChangeAfterDialFailure(t *testing.T) {
 	resolver := &fakeResolver{addresses: []netip.Addr{oldAddress}, ttl: time.Hour}
 
 	keyPath := filepath.Join(t.TempDir(), "edge.key")
-	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{0x42}, 32), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestKey(t, keyPath, bytes.Repeat([]byte{0x42}, 32))
 	configFile := Config{Version: 1, Listen: "127.0.0.1:0", Allow: []string{"media.example.com"}, KeyFile: keyPath}
 	configFile.applyDefaults()
 	server, err := NewServer(configFile, resolver, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -302,5 +296,15 @@ func TestEdgeFollowsPrefixChangeAfterDialFailure(t *testing.T) {
 	}
 	if _, err := server.dialHome(t.Context(), retried, 443); err != nil {
 		t.Fatalf("dialling the republished address failed: %v", err)
+	}
+}
+
+func writeTestKey(t *testing.T, path string, key []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := protectTestKey(path); err != nil {
+		t.Fatal(err)
 	}
 }

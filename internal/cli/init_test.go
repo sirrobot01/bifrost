@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -89,7 +90,7 @@ func TestRunnerInitInteractiveCreatesEveryFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s was not created: %v", name, err)
 		}
-		if permissions := info.Mode().Perm(); permissions != 0o600 {
+		if permissions := info.Mode().Perm(); runtime.GOOS != "windows" && permissions != 0o600 {
 			t.Fatalf("%s mode = %04o, want 0600", name, permissions)
 		}
 	}

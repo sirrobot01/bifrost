@@ -310,6 +310,10 @@ func writeSecret(path string, content []byte, mode os.FileMode) error {
 	if err := os.WriteFile(temporary, content, mode); err != nil {
 		return err
 	}
+	if err := applyFilePermissions(temporary, mode); err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
 	return os.Rename(temporary, path)
 }
 

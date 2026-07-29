@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/edge"
 )
 
@@ -115,8 +117,11 @@ func TestEdgeInviteThenJoin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("edge key mode = %04o, want 0600", info.Mode().Perm())
+	}
+	if _, err := config.ReadSecret(filepath.Join(edgeDir, "edge-key")); err != nil {
+		t.Fatalf("edge key permissions: %v", err)
 	}
 }
 

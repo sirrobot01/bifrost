@@ -123,6 +123,9 @@ func TestReadSecretRejectsBroadPermissions(t *testing.T) {
 
 func TestExampleConfigDecodes(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the packaged example uses Unix paths")
+	}
 
 	file, err := os.Open("../../configs/bifrost.example.yaml")
 	if err != nil {
