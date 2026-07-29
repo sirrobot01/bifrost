@@ -6,9 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/sirrobot01/bifrost/internal/platform"
+	"github.com/sirrobot01/bifrost/internal/platformselect"
 	"github.com/sirrobot01/bifrost/internal/selfupdate"
 )
 
@@ -71,18 +72,19 @@ func (r Runner) runUpgrade(ctx context.Context, arguments []string) error {
 		return err
 	}
 
-	running := runningUnits()
+	services := platformselect.New().Services()
+	running := runningUnits(services)
 	if len(running) == 0 {
 		_, err := fmt.Fprintln(r.Stdout, "No bifrost service is running, so nothing was restarted.")
 		return err
 	}
 	if !*restart {
-		_, err := fmt.Fprintf(r.Stdout, "The new binary starts serving after: sudo systemctl restart %s\n", strings.Join(running, " "))
+		_, err := fmt.Fprintf(r.Stdout, "The new binary starts serving after: %s\n", services.RestartAdvice(running))
 		return err
 	}
 	for _, unit := range running {
-		if output, err := exec.CommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
-			return fmt.Errorf("restart %s: %w: %s", unit, err, strings.TrimSpace(string(output)))
+		if err := services.Restart(ctx, unit); err != nil {
+			return fmt.Errorf("restart %s: %w", unit, err)
 		}
 		if _, err := fmt.Fprintf(r.Stdout, "Restarted %s.\n", unit); err != nil {
 			return err
@@ -93,12 +95,10 @@ func (r Runner) runUpgrade(ctx context.Context, arguments []string) error {
 
 // runningUnits reports which Bifrost units systemd currently has active. A host
 // without systemd, or with neither unit running, yields none.
-func runningUnits() []string {
+func runningUnits(services platform.ServiceManager) []string {
 	var active []string
 	for _, unit := range managedUnits {
-		// is-active exits non-zero for anything but an active unit, so the exit
-		// status alone answers the question.
-		if err := exec.Command("systemctl", "is-active", "--quiet", unit).Run(); err == nil {
+		if services.Active(unit) {
 			active = append(active, unit)
 		}
 	}

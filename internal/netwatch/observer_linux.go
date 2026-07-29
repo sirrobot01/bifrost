@@ -16,13 +16,13 @@ import (
 
 const eventBufferSize = 16
 
-// Observer reports IPv6 state changes for one Linux network interface.
-type Observer struct {
+// linuxObserver reports IPv6 state changes for one Linux network interface.
+type linuxObserver struct {
 	interfaceName string
 }
 
-// New returns an Observer for interfaceName.
-func New(interfaceName string) (*Observer, error) {
+// NewLinux returns the netlink observer for interfaceName.
+func NewLinux(interfaceName string) (Observer, error) {
 	if interfaceName == "" {
 		return nil, errors.New("network interface is required")
 	}
@@ -30,11 +30,11 @@ func New(interfaceName string) (*Observer, error) {
 		return nil, fmt.Errorf("find network interface %q: %w", interfaceName, err)
 	}
 
-	return &Observer{interfaceName: interfaceName}, nil
+	return &linuxObserver{interfaceName: interfaceName}, nil
 }
 
 // Snapshot reads the current IPv6 state of the observed interface.
-func (o *Observer) Snapshot() (Snapshot, error) {
+func (o *linuxObserver) Snapshot() (Snapshot, error) {
 	link, err := netlink.LinkByName(o.interfaceName)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("find network interface %q: %w", o.interfaceName, err)
@@ -65,7 +65,7 @@ func (o *Observer) Snapshot() (Snapshot, error) {
 }
 
 // Observe sends an initial snapshot followed by a new snapshot after each relevant netlink event.
-func (o *Observer) Observe(ctx context.Context, snapshots chan<- Snapshot) error {
+func (o *linuxObserver) Observe(ctx context.Context, snapshots chan<- Snapshot) error {
 	link, err := netlink.LinkByName(o.interfaceName)
 	if err != nil {
 		return fmt.Errorf("find network interface %q: %w", o.interfaceName, err)

@@ -1,18 +1,11 @@
-//go:build linux
-
 package home
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/netip"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,11 +46,7 @@ type pinholeLease struct {
 	renewAt time.Time
 }
 
-func newPinholeManager(interfaceName string, secret []byte, logger *slog.Logger) (*pinholeManager, error) {
-	gateway, err := defaultIPv6Gateway(interfaceName)
-	if err != nil {
-		return nil, err
-	}
+func newPinholeManager(gateway netip.Addr, secret []byte, logger *slog.Logger) (*pinholeManager, error) {
 	return &pinholeManager{
 		client:  pcp.NewClient(gateway),
 		logger:  logger,
@@ -174,59 +163,6 @@ func (m *pinholeManager) nonce(socket netip.AddrPort) [12]byte {
 	var nonce [12]byte
 	copy(nonce[:], sum[:12])
 	return nonce
-}
-
-// defaultIPv6Gateway reads the next hop of the IPv6 default route, which is
-// where a PCP server listens if there is one. The kernel exposes routes as
-// hex text, and the next hop is normally link-local, so it carries the
-// outgoing interface as its zone.
-func defaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
-	file, err := os.Open("/proc/net/ipv6_route")
-	if err != nil {
-		return netip.Addr{}, fmt.Errorf("read IPv6 routes: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 10 {
-			continue
-		}
-		if interfaceName != "" && fields[9] != interfaceName {
-			continue
-		}
-		destinationLength, err := strconv.ParseInt(fields[1], 16, 32)
-		if err != nil || destinationLength != 0 || strings.Trim(fields[0], "0") != "" {
-			continue
-		}
-		gateway, ok := parseHexAddress(fields[4])
-		if !ok || gateway.IsUnspecified() {
-			continue
-		}
-		if gateway.IsLinkLocalUnicast() {
-			gateway = gateway.WithZone(fields[9])
-		}
-		return gateway, nil
-	}
-	return netip.Addr{}, errors.New("no IPv6 default route, so there is no router to ask")
-}
-
-// parseHexAddress decodes the 32 hex digit form used throughout
-// /proc/net/ipv6_route.
-func parseHexAddress(value string) (netip.Addr, bool) {
-	if len(value) != 32 {
-		return netip.Addr{}, false
-	}
-	var raw [16]byte
-	for index := range raw {
-		octet, err := strconv.ParseUint(value[index*2:index*2+2], 16, 8)
-		if err != nil {
-			return netip.Addr{}, false
-		}
-		raw[index] = byte(octet)
-	}
-	return netip.AddrFrom16(raw), true
 }
 
 // pinholeRequester adapts a possibly-absent manager to the controller's

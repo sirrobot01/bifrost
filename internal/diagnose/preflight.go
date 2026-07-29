@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"runtime"
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
@@ -22,6 +21,8 @@ const defaultEgressTarget = "[2606:4700:4700::1111]:443"
 // comes from inspecting the machine, not from a Bifrost configuration file:
 // preflight has to run before a configuration exists.
 type PreflightInput struct {
+	// Platform is the user-facing name of the native host implementation.
+	Platform string
 	// Interface is the publication interface being evaluated.
 	Interface string
 	// MTU is that interface's MTU.
@@ -51,17 +52,11 @@ func (c *Checker) Preflight(ctx context.Context, input PreflightInput) (Report, 
 	}
 	report := Report{GeneratedAt: c.now()}
 
-	if runtime.GOOS == "linux" {
-		report.Findings = append(report.Findings, Finding{Check: "platform", Severity: SeverityInfo, Summary: "host runs Linux"})
-	} else {
-		report.Findings = append(report.Findings, Finding{
-			Check:       "platform",
-			Severity:    SeverityError,
-			Summary:     "the Bifrost home role requires Linux",
-			Detail:      "this host runs " + runtime.GOOS,
-			Remediation: "run Bifrost on the Linux host that owns the public IPv6 addresses",
-		})
+	platformName := input.Platform
+	if platformName == "" {
+		platformName = "an unspecified platform"
 	}
+	report.Findings = append(report.Findings, Finding{Check: "platform", Severity: SeverityInfo, Summary: "host runs " + platformName})
 
 	report.Findings = append(report.Findings, Finding{
 		Check:    "interface",
@@ -79,8 +74,8 @@ func (c *Checker) Preflight(ctx context.Context, input PreflightInput) (Report, 
 			Check:       "privileges",
 			Severity:    SeverityWarning,
 			Summary:     "not running with address-management privilege",
-			Detail:      "splice mode needs CAP_NET_ADMIN and ports below 1024 need CAP_NET_BIND_SERVICE",
-			Remediation: "re-run this command with sudo to test privileged operations, or rely on the supplied systemd unit which grants both capabilities",
+			Detail:      "splice mode needs permission to manage interface addresses and bind its public service ports",
+			Remediation: "re-run this command as an administrator, or use the supplied operating-system service definition",
 		})
 	}
 

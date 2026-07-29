@@ -1,5 +1,3 @@
-//go:build linux
-
 package home
 
 import (
@@ -24,13 +22,14 @@ import (
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/notify"
 	"github.com/sirrobot01/bifrost/internal/observability"
+	platformapi "github.com/sirrobot01/bifrost/internal/platform"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
 type Runtime struct {
 	config       config.Config
 	pinholes     *pinholeManager
-	observer     *netwatch.Observer
+	observer     netwatch.Observer
 	controller   *Controller
 	services     []Service
 	publisher    *dnspublish.Reconciler
@@ -52,7 +51,10 @@ type Runtime struct {
 	reloads chan config.Config
 }
 
-func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error) {
+func NewRuntime(configFile config.Config, logger *slog.Logger, host platformapi.Platform) (*Runtime, error) {
+	if host == nil {
+		return nil, errors.New("host platform is required")
+	}
 	if err := configFile.Validate(); err != nil {
 		return nil, err
 	}
@@ -63,7 +65,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		return nil, errors.New("at least one static service is required when Docker discovery is disabled")
 	}
 
-	observer, err := netwatch.New(configFile.Interface)
+	observer, err := host.Observer(configFile.Interface)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +77,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
-	backend, err := serviceaddr.NewNetlinkBackend(configFile.Interface)
+	backend, err := host.AddressBackend(configFile.Interface)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +119,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	var firewall hostfw.Manager
 	var allowances hostfw.Spec
 	if configFile.Firewall.Managed() {
-		firewall, err = hostfw.New()
+		firewall, err = host.Firewall()
 		if err != nil {
 			return nil, fmt.Errorf("managed firewall: %w", err)
 		}
@@ -130,7 +132,12 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	}
 	var pinholes *pinholeManager
 	if configFile.Firewall.PCP {
-		pinholes, err = newPinholeManager(configFile.Interface, secret, logger)
+		gateway, gatewayErr := host.DefaultIPv6Gateway(configFile.Interface)
+		if gatewayErr != nil {
+			logger.Warn("router pinhole requests are unavailable", "error", gatewayErr)
+		} else {
+			pinholes, err = newPinholeManager(gateway, secret, logger)
+		}
 		if err != nil {
 			logger.Warn("router pinhole requests are unavailable", "error", err)
 		}
@@ -173,7 +180,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 	}
 	var dockerClient *dockerwatch.Client
 	if configFile.Docker.Enabled {
-		dockerClient, err = dockerwatch.NewClient(dockerwatch.ClientConfig{Socket: configFile.Docker.Socket})
+		dockerClient, err = host.DockerClient(configFile.Docker.Socket)
 		if err != nil {
 			return nil, err
 		}

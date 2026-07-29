@@ -8,10 +8,10 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"os"
 	"strings"
 
 	"github.com/sirrobot01/bifrost/internal/diagnose"
+	"github.com/sirrobot01/bifrost/internal/platformselect"
 )
 
 // runDoctor reports whether this host can run Bifrost. It deliberately loads no
@@ -101,14 +101,14 @@ func (r Runner) preflight(ctx context.Context, interfaceName, dockerSocket strin
 		}), nil
 	}
 
-	// Constructed only once an interface is settled, because building the
-	// default auditor opens a netlink socket.
-	checker := diagnose.NewChecker(nil, nil)
+	host := platformselect.New()
+	checker := diagnose.NewChecker(nil, host.FirewallAuditor())
 	return checker.Preflight(ctx, diagnose.PreflightInput{
+		Platform:     host.Name(),
 		Interface:    interfaceName,
 		MTU:          snapshot.MTU,
 		Candidates:   snapshot.Candidates,
-		Privileged:   os.Geteuid() == 0,
+		Privileged:   host.Privileged(),
 		DockerSocket: dockerSocket,
 		Probe:        prober,
 		SkipNetwork:  offline,

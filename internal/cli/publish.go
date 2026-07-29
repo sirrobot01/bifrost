@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/sirrobot01/bifrost/internal/config"
+	"github.com/sirrobot01/bifrost/internal/platform"
+	"github.com/sirrobot01/bifrost/internal/platformselect"
 )
 
 func (r Runner) runPublish(ctx context.Context, arguments []string) error {
@@ -197,12 +198,13 @@ func writeConfigIfValid(path, contents string) error {
 // running one is told what to do rather than treated as an error, because
 // publishing before the first start is a normal order to work in.
 func (r Runner) reloadAfterPublish(ctx context.Context) error {
-	if !slicesContains(runningUnits(), "bifrost") {
-		_, err := fmt.Fprintln(r.Stdout, "bifrost is not running. Start it with: sudo systemctl enable --now bifrost")
+	services := platformselect.New().Services()
+	if !slicesContains(runningUnits(services), platform.HomeService) {
+		_, err := fmt.Fprintln(r.Stdout, "bifrost is not running. Start it with: "+services.StartAdvice(platform.HomeService))
 		return err
 	}
-	if output, err := exec.CommandContext(ctx, "systemctl", "reload", "bifrost").CombinedOutput(); err != nil {
-		return fmt.Errorf("reload bifrost: %w: %s", err, strings.TrimSpace(string(output)))
+	if err := services.Reload(ctx, platform.HomeService); err != nil {
+		return fmt.Errorf("reload bifrost: %w", err)
 	}
 	_, err := fmt.Fprintln(r.Stdout, "Reloaded bifrost. Confirm with: sudo bifrost check")
 	return err
