@@ -10,11 +10,11 @@ import (
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/home"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
+	"github.com/sirrobot01/bifrost/internal/platform"
 )
 
 func platformSnapshot(interfaceName string) (netwatch.Snapshot, error) {
-	observer, err := platformselect.New().Observer(interfaceName)
+	observer, err := platform.New().Observer(interfaceName)
 	if err != nil {
 		return netwatch.Snapshot{}, err
 	}
@@ -22,7 +22,7 @@ func platformSnapshot(interfaceName string) (netwatch.Snapshot, error) {
 }
 
 func platformServe(ctx context.Context, configPath string, configFile config.Config, dryRun bool, logger *slog.Logger, output io.Writer) error {
-	host := platformselect.New()
+	host := platform.New()
 	runtime, err := home.NewRuntime(configFile, logger, host)
 	if err != nil {
 		return err

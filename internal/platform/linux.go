@@ -1,6 +1,6 @@
 //go:build linux
 
-package linux
+package platform
 
 import (
 	"bufio"
@@ -18,31 +18,30 @@ import (
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
 	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
-	platformapi "github.com/sirrobot01/bifrost/internal/platform"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
-type Platform struct{}
+type host struct{}
 
-func New() Platform           { return Platform{} }
-func (Platform) Name() string { return "Linux" }
-func (Platform) Capabilities() platformapi.Capabilities {
-	return platformapi.Capabilities{ManagedFirewall: true, FirewallAudit: true, PCP: true, Docker: true}
+func New() Host           { return host{} }
+func (host) Name() string { return "Linux" }
+func (host) Capabilities() Capabilities {
+	return Capabilities{ManagedFirewall: true, FirewallAudit: true, PCP: true, Docker: true}
 }
-func (Platform) Observer(name string) (netwatch.Observer, error) { return netwatch.NewLinux(name) }
-func (Platform) AddressBackend(name string) (serviceaddr.AddressBackend, error) {
+func (host) Observer(name string) (netwatch.Observer, error) { return netwatch.NewLinux(name) }
+func (host) AddressBackend(name string) (serviceaddr.AddressBackend, error) {
 	return serviceaddr.NewNetlinkBackend(name)
 }
-func (Platform) Firewall() (hostfw.Manager, error)         { return hostfw.New() }
-func (Platform) FirewallAuditor() diagnose.FirewallAuditor { return diagnose.DefaultFirewallAuditor() }
-func (Platform) DockerClient(socket string) (*dockerwatch.Client, error) {
+func (host) Firewall() (hostfw.Manager, error)         { return hostfw.New() }
+func (host) FirewallAuditor() diagnose.FirewallAuditor { return diagnose.DefaultFirewallAuditor() }
+func (host) DockerClient(socket string) (*dockerwatch.Client, error) {
 	return dockerwatch.NewClient(dockerwatch.ClientConfig{Socket: socket})
 }
-func (Platform) Privileged() bool                     { return os.Geteuid() == 0 }
-func (Platform) ReloadSignal() os.Signal              { return syscall.SIGHUP }
-func (Platform) Services() platformapi.ServiceManager { return serviceManager{} }
+func (host) Privileged() bool         { return os.Geteuid() == 0 }
+func (host) ReloadSignal() os.Signal  { return syscall.SIGHUP }
+func (host) Services() ServiceManager { return serviceManager{} }
 
-func (Platform) DefaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
+func (host) DefaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
 	file, err := os.Open("/proc/net/ipv6_route")
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("read IPv6 routes: %w", err)
@@ -87,8 +86,8 @@ func parseHexAddress(value string) (netip.Addr, bool) {
 
 type serviceManager struct{}
 
-var _ platformapi.Platform = Platform{}
-var _ platformapi.ServiceManager = serviceManager{}
+var _ Host = host{}
+var _ ServiceManager = serviceManager{}
 
 func (serviceManager) Active(service string) bool {
 	return exec.Command("systemctl", "is-active", "--quiet", service).Run() == nil

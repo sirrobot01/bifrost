@@ -1,6 +1,6 @@
 //go:build darwin
 
-package darwin
+package platform
 
 import (
 	"context"
@@ -16,37 +16,36 @@ import (
 	"github.com/sirrobot01/bifrost/internal/dockerwatch"
 	"github.com/sirrobot01/bifrost/internal/hostfw"
 	"github.com/sirrobot01/bifrost/internal/netwatch"
-	platformapi "github.com/sirrobot01/bifrost/internal/platform"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
-type Platform struct{}
+type host struct{}
 
-func New() Platform           { return Platform{} }
-func (Platform) Name() string { return "macOS" }
-func (Platform) Capabilities() platformapi.Capabilities {
-	return platformapi.Capabilities{PCP: true, Docker: true}
+func New() Host           { return host{} }
+func (host) Name() string { return "macOS" }
+func (host) Capabilities() Capabilities {
+	return Capabilities{PCP: true, Docker: true}
 }
-func (Platform) Observer(name string) (netwatch.Observer, error) { return netwatch.NewPolling(name) }
-func (Platform) AddressBackend(name string) (serviceaddr.AddressBackend, error) {
+func (host) Observer(name string) (netwatch.Observer, error) { return netwatch.NewPolling(name) }
+func (host) AddressBackend(name string) (serviceaddr.AddressBackend, error) {
 	return serviceaddr.NewIfconfigBackend(name, serviceaddr.IfconfigDarwin)
 }
-func (Platform) Firewall() (hostfw.Manager, error)         { return nil, hostfw.ErrUnsupported }
-func (Platform) FirewallAuditor() diagnose.FirewallAuditor { return diagnose.DefaultFirewallAuditor() }
-func (Platform) DockerClient(socket string) (*dockerwatch.Client, error) {
+func (host) Firewall() (hostfw.Manager, error)         { return nil, hostfw.ErrUnsupported }
+func (host) FirewallAuditor() diagnose.FirewallAuditor { return diagnose.DefaultFirewallAuditor() }
+func (host) DockerClient(socket string) (*dockerwatch.Client, error) {
 	return dockerwatch.NewClient(dockerwatch.ClientConfig{Socket: socket})
 }
-func (Platform) Privileged() bool                     { return os.Geteuid() == 0 }
-func (Platform) ReloadSignal() os.Signal              { return syscall.SIGHUP }
-func (Platform) Services() platformapi.ServiceManager { return serviceManager{} }
+func (host) Privileged() bool         { return os.Geteuid() == 0 }
+func (host) ReloadSignal() os.Signal  { return syscall.SIGHUP }
+func (host) Services() ServiceManager { return serviceManager{} }
 
-func (Platform) DefaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
+func (host) DefaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
 	output, err := exec.Command("/sbin/route", "-n", "get", "-inet6", "default").CombinedOutput()
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("inspect IPv6 default route: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	var gateway, device string
-	for _, line := range strings.Split(string(output), "\n") {
+	for line := range strings.SplitSeq(string(output), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
@@ -73,8 +72,8 @@ func (Platform) DefaultIPv6Gateway(interfaceName string) (netip.Addr, error) {
 
 type serviceManager struct{}
 
-var _ platformapi.Platform = Platform{}
-var _ platformapi.ServiceManager = serviceManager{}
+var _ Host = host{}
+var _ ServiceManager = serviceManager{}
 
 func label(service string) string { return "dev.biodun." + service }
 func plist(service string) string { return "/Library/LaunchDaemons/" + label(service) + ".plist" }

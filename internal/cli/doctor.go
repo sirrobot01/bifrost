@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/sirrobot01/bifrost/internal/diagnose"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
+	"github.com/sirrobot01/bifrost/internal/platform"
 )
 
 // runDoctor reports whether this host can run Bifrost. It deliberately loads no
@@ -101,7 +101,7 @@ func (r Runner) preflight(ctx context.Context, interfaceName, dockerSocket strin
 		}), nil
 	}
 
-	host := platformselect.New()
+	host := platform.New()
 	checker := diagnose.NewChecker(nil, host.FirewallAuditor())
 	return checker.Preflight(ctx, diagnose.PreflightInput{
 		Platform:     host.Name(),

@@ -17,10 +17,7 @@ const (
 	EdgeService = "bifrost-edge"
 )
 
-// Platform is every host operation used by the portable Bifrost core. Each
-// supported operating system supplies one implementation; home and CLI code
-// never select an operating system themselves.
-type Platform interface {
+type Host interface {
 	Name() string
 	Capabilities() Capabilities
 	Observer(interfaceName string) (netwatch.Observer, error)
@@ -41,9 +38,6 @@ type Capabilities struct {
 	Docker          bool
 }
 
-// ServiceManager owns the native service-manager vocabulary. Callers use the
-// stable Bifrost service names above; implementations translate them to
-// systemd units, launchd labels, rc.d scripts, or Windows services.
 type ServiceManager interface {
 	Active(service string) bool
 	Start(context.Context, string) error

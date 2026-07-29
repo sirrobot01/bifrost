@@ -22,7 +22,7 @@ import (
 	"github.com/sirrobot01/bifrost/internal/netwatch"
 	"github.com/sirrobot01/bifrost/internal/notify"
 	"github.com/sirrobot01/bifrost/internal/observability"
-	platformapi "github.com/sirrobot01/bifrost/internal/platform"
+	"github.com/sirrobot01/bifrost/internal/platform"
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
 )
 
@@ -51,7 +51,7 @@ type Runtime struct {
 	reloads chan config.Config
 }
 
-func NewRuntime(configFile config.Config, logger *slog.Logger, host platformapi.Platform) (*Runtime, error) {
+func NewRuntime(configFile config.Config, logger *slog.Logger, host platform.Host) (*Runtime, error) {
 	if host == nil {
 		return nil, errors.New("host platform is required")
 	}

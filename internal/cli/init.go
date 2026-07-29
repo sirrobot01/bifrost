@@ -17,7 +17,6 @@ import (
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/dnspublish"
 	"github.com/sirrobot01/bifrost/internal/platform"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
 )
 
 const (
@@ -376,7 +375,7 @@ func writeInitNextSteps(prompt *prompter, configPath string, service config.Stat
 	}
 	_ = prompt.say("")
 	_ = prompt.say("Your router must permit inbound IPv6 TCP %d to this host before %s answers.", service.Listen, service.DNSName)
-	host := platformselect.New()
+	host := platform.New()
 	if host.Capabilities().ManagedFirewall {
 		_ = prompt.say("Set firewall.mode to managed in the configuration to have Bifrost scope inbound")
 		_ = prompt.say("IPv6 to the published services, and firewall.pcp to ask the router itself.")

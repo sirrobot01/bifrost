@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/sirrobot01/bifrost/internal/platform"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
 	"github.com/sirrobot01/bifrost/internal/selfupdate"
 )
 
@@ -72,7 +71,7 @@ func (r Runner) runUpgrade(ctx context.Context, arguments []string) error {
 		return err
 	}
 
-	services := platformselect.New().Services()
+	services := platform.New().Services()
 	running := runningUnits(services)
 	if len(running) == 0 {
 		_, err := fmt.Fprintln(r.Stdout, "No bifrost service is running, so nothing was restarted.")

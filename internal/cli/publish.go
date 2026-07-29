@@ -12,7 +12,6 @@ import (
 
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/platform"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
 )
 
 func (r Runner) runPublish(ctx context.Context, arguments []string) error {
@@ -198,7 +197,7 @@ func writeConfigIfValid(path, contents string) error {
 // running one is told what to do rather than treated as an error, because
 // publishing before the first start is a normal order to work in.
 func (r Runner) reloadAfterPublish(ctx context.Context) error {
-	services := platformselect.New().Services()
+	services := platform.New().Services()
 	if !slicesContains(runningUnits(services), platform.HomeService) {
 		_, err := fmt.Fprintln(r.Stdout, "bifrost is not running. Start it with: "+services.StartAdvice(platform.HomeService))
 		return err

@@ -15,7 +15,6 @@ import (
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/edge"
 	"github.com/sirrobot01/bifrost/internal/platform"
-	"github.com/sirrobot01/bifrost/internal/platformselect"
 )
 
 // edgeServiceAccount runs the edge role. It is separate from the home account
@@ -131,11 +130,11 @@ func (r Runner) runEdgeJoin(arguments []string) error {
 	_, _ = fmt.Fprintf(r.Stdout, "Wrote %s and %s.\n", configPath, keyPath)
 
 	if !*start {
-		_, _ = fmt.Fprintf(r.Stdout, "\nNext: %s\n", platformselect.New().Services().StartAdvice(platform.EdgeService))
+		_, _ = fmt.Fprintf(r.Stdout, "\nNext: %s\n", platform.New().Services().StartAdvice(platform.EdgeService))
 		return nil
 	}
 	if err := startEdgeService(); err != nil {
-		_, _ = fmt.Fprintf(r.Stdout, "\nThe configuration is in place, but the service did not start: %v\nStart it with: %s\n", err, platformselect.New().Services().StartAdvice(platform.EdgeService))
+		_, _ = fmt.Fprintf(r.Stdout, "\nThe configuration is in place, but the service did not start: %v\nStart it with: %s\n", err, platform.New().Services().StartAdvice(platform.EdgeService))
 		return nil
 	}
 	_, _ = fmt.Fprint(r.Stdout, "\nStarted bifrost-edge.\n\nOn the home host, set edge.enabled and edge.ipv4_address, mark services with\n`edge: true`, then restart bifrost so the A records are published.\n")
@@ -200,5 +199,5 @@ func applyAccountOwnership(account, configDir string, files []pendingFile) error
 }
 
 func startEdgeService() error {
-	return platformselect.New().Services().Start(context.Background(), platform.EdgeService)
+	return platform.New().Services().Start(context.Background(), platform.EdgeService)
 }
