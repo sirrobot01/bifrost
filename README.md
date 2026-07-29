@@ -6,7 +6,7 @@
   </picture>
 </p>
 
-Bifrost publishes self-hosted TCP services through native IPv6. It runs on Linux, macOS, FreeBSD, and OpenBSD hosts that have public IPv6 and use CGNAT for IPv4.
+Bifrost publishes self-hosted TCP services through native IPv6. It runs on Linux, macOS, FreeBSD, OpenBSD, and Windows hosts that have public IPv6 and use CGNAT for IPv4.
 
 Bifrost watches the delegated prefix, manages owned DNS records, and checks the inbound network path. It can also give an IPv4-only backend a stable IPv6 address.
 
@@ -24,21 +24,27 @@ Bifrost does not use a persistent tunnel. It does not require client software. I
 
 ## Requirements
 
-- Linux, macOS, FreeBSD, or OpenBSD
+- Linux, macOS, FreeBSD, OpenBSD, or Windows 10/Server 2016 and newer
 - A global IPv6 `/64` on the Bifrost host
 - Permission to add IPv6 addresses and bind service ports
 - An inbound IPv6 rule on the home router
 - Cloudflare, deSEC, dynv6, or RFC 2136 credentials
 - Go 1.26 to build from source
 
-The home role must run on the host that owns the managed service addresses. Bifrost does not configure another host interface or an ISP router. Linux supports advisory and managed nftables modes; macOS and the BSDs use advisory firewall mode.
+The home role must run on the host that owns the managed service addresses. Bifrost does not configure another host interface or an ISP router. Linux supports advisory and managed nftables modes; macOS, the BSDs, and Windows use advisory firewall mode.
 
 ## Quick start
 
-Install the latest release. The script verifies the checksum and installs a native package or archive for the detected operating system. Linux packages create systemd units; macOS and BSD archives install their native service definitions. It starts nothing.
+Install the latest release. The script verifies the checksum and installs native services without starting them. On Unix:
 
 ```sh
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
+```
+
+On Windows, run an Administrator PowerShell:
+
+```powershell
+irm https://bifrost.biodun.dev/install.ps1 | iex
 ```
 
 Check that the host can run Bifrost. This reads no configuration and changes nothing.

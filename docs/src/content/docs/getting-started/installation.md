@@ -3,13 +3,19 @@ title: Install Bifrost
 description: The install script, the package and archive alternatives, release verification, and upgrades.
 ---
 
-One command installs the latest release:
+One command installs the latest release on Linux, macOS, FreeBSD, or OpenBSD:
 
 ```sh
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-The script detects the operating system, CPU, and package manager, verifies the download against the release checksum file, and installs the deb or rpm package on Linux. On macOS, FreeBSD, OpenBSD, or where no Linux package fits, it installs the archive binary and native service definition without enabling it.
+On Windows, open PowerShell as Administrator and run:
+
+```powershell
+irm https://bifrost.biodun.dev/install.ps1 | iex
+```
+
+The scripts detect the operating system and CPU and verify the download against the release checksum file. Linux receives a deb, rpm, or archive; macOS and the BSDs receive an archive and native service definition. Windows receives the native executable and two Windows Service definitions. A new installation enables or starts nothing.
 
 The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0755`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
@@ -23,7 +29,7 @@ The rest of this page covers the alternatives to the script, release verificatio
 
 Every method ends in the same place. Pick the one that fits how you manage the host.
 
-Linux builds cover three CPUs; macOS, FreeBSD, and OpenBSD cover x86-64 and ARM64. Packages use the first suffix, archives the second:
+Linux builds cover three CPUs; macOS, FreeBSD, OpenBSD, and Windows cover x86-64 and ARM64. Packages use the first suffix, archives the second:
 
 | CPU | Package suffix | Archive suffix |
 |---|---|---|
@@ -74,6 +80,23 @@ doas rcctl start bifrost
 ```
 
 Reload with `doas rcctl reload bifrost`. OpenBSD uses advisory `pf` mode and does not support Docker discovery.
+
+### Windows
+
+Windows 10, Windows 11, and Windows Server 2016 or newer are supported on x86-64 and ARM64. The PowerShell installer puts `bifrost.exe` in `%ProgramFiles%\Bifrost`, keeps machine configuration and certificate state under `%ProgramData%\Bifrost`, registers `bifrost` and `bifrost-edge` with the Service Control Manager, and writes daemon logs to the Windows Application event log. It does not start a new service.
+
+Run setup from an Administrator PowerShell:
+
+```powershell
+bifrost doctor
+bifrost init --interactive
+bifrost serve --config "$env:ProgramData\Bifrost\config.yaml" --dry-run
+Set-Service -Name bifrost -StartupType Automatic
+Start-Service -Name bifrost
+bifrost check --config "$env:ProgramData\Bifrost\config.yaml"
+```
+
+`bifrost publish` restarts the home service because Windows has no Unix reload signal. Use `Get-WinEvent -LogName Application` to inspect service logs. Windows Firewall is advisory: create an inbound rule for each published address and port. Docker Desktop discovery uses `\\.\pipe\docker_engine`; access to that pipe is equivalent to Docker administrator access.
 
 ### Download the package directly
 
@@ -159,6 +182,12 @@ sudo bifrost upgrade
 ```
 
 This downloads the latest release archive, verifies it against the release checksum file, and replaces the running binary in place. `/etc/bifrost` is never touched. Add `--check` to compare versions without installing anything, or `--restart` to restart whichever units are running once the new binary is in place.
+
+Windows keeps a running executable locked. `bifrost upgrade --check` is available there, but installation uses the PowerShell installer, which stops only active Bifrost services, replaces the verified executable, and starts those services again:
+
+```powershell
+irm https://bifrost.biodun.dev/install.ps1 | iex
+```
 
 Without `--restart`, the command prints the native restart command. The old binary keeps serving until you do. On Linux:
 

@@ -5,7 +5,7 @@ description: Configure the home role, DNS providers, services, Docker, and the e
 
 Bifrost reads strict YAML: unknown fields and multiple documents are rejected.
 
-Each secret lives in its own regular file, unreadable by group and other.
+Each secret lives in its own regular file. Unix uses mode `0600`; Windows uses a protected ACL for LocalSystem and Administrators.
 
 ## Create the files by hand
 
@@ -27,7 +27,9 @@ sudoedit /etc/bifrost/config.yaml
 sudo chmod 0600 /etc/bifrost/config.yaml /etc/bifrost/address-secret /etc/bifrost/cloudflare-token
 ```
 
-Bifrost refuses any secret file readable by group or other. Review with `bifrost serve --dry-run` before the first start.
+Bifrost refuses a secret file with broad Unix permissions or a Windows ACL that grants an unprivileged principal read access. Review with `bifrost serve --dry-run` before the first start.
+
+The examples below use Unix paths. Windows defaults to `%ProgramData%\Bifrost`, with certificate state under `%ProgramData%\Bifrost\state`.
 
 Omit anything with a default, including `owner_id` and `secret_file`. A minimal file is easier to keep correct than a full one.
 
@@ -60,11 +62,11 @@ static_services:
 | `interface` | — | The interface holding the global IPv6 `/64`. Required. |
 | `prefix_override` | automatic | An IPv6 `/64`, when you must pin the selection. |
 | `owner_id` | this host's hostname | Identifies the records this installation owns. |
-| `secret_file` | `/etc/bifrost/address-secret` | Created by `init`. |
+| `secret_file` | OS configuration directory plus `address-secret` | `/etc/bifrost` on Unix; `%ProgramData%\Bifrost` on Windows. |
 | `settle_window` | `10s` | Delay after a network or Docker change. |
 | `drain_grace` | `2m` | Overlap and connection drain during a prefix change. |
 | `dns.ttl` | `60s` | Between 60s and 24h. |
-| `firewall.mode` | `advisory` | `managed` lets Bifrost own the inbound IPv6 policy on Linux; macOS and the BSDs support `advisory`. |
+| `firewall.mode` | `advisory` | `managed` lets Bifrost own the inbound IPv6 policy on Linux; other native platforms support `advisory`. |
 | `firewall.trusted_interfaces` | none | Managed mode only. Interfaces accepted in full, such as a VPN link. |
 | `firewall.allow_ports` | none | Managed mode only. Extra inbound TCP ports on every address. Put SSH here if you administer the host over IPv6. |
 | `firewall.pcp` | `false` | Ask the router to open each published socket. Most routers do not answer, and nothing changes when they do not. |
@@ -75,8 +77,8 @@ static_services:
 | `notify.format` | `json` | `json` includes a `content` field, so a Discord webhook works unmodified; `text` suits ntfy. |
 | `notify.min_interval` | `30m` | Suppresses a repeat of the same event for the same service. |
 | `metrics.listen` | `127.0.0.1:9098` | Must be loopback. |
-| `docker.socket` | `/var/run/docker.sock` | Linux and macOS only. Set Docker Desktop's actual Unix socket on macOS. Docker discovery is rejected on FreeBSD and OpenBSD. |
-| `acme.state_dir` | `/var/lib/bifrost` | Where certificates and the account key are kept. |
+| `docker.socket` | OS Docker endpoint | `/var/run/docker.sock` on Unix and `\\.\pipe\docker_engine` on Windows. Docker discovery is rejected on FreeBSD and OpenBSD. |
+| `acme.state_dir` | OS state directory | `/var/lib/bifrost` on Unix and `%ProgramData%\Bifrost\state` on Windows. |
 
 Do not change `owner_id` after Bifrost creates DNS records: a new ID does not own the old ones. Do not change the address secret unless you want new splice addresses.
 
@@ -277,6 +279,8 @@ Set `bifrost.network` when the container has more than one Docker network. You c
 Containers are listed at startup and every 30 seconds; Docker events trigger an earlier update.
 
 The Docker socket grants root-level control of the host, and a read-only file mount does not make the API read-only.
+
+On Windows, Docker Desktop exposes the Engine API through `\\.\pipe\docker_engine`. Container-internal addresses may not be reachable from the Windows host when Docker Desktop uses its Linux VM; set `bifrost.backend` to a host-reachable address and port in that case.
 
 ## Configure edge publication
 

@@ -18,7 +18,7 @@ Findings are `INFO`, `WARNING`, or `ERROR`. Only errors block publication. A war
 
 ### `platform`
 
-The home role runs natively on Linux, macOS, FreeBSD, and OpenBSD. The information line names the implementation selected at build time.
+The home role runs natively on Linux, macOS, FreeBSD, OpenBSD, and Windows. The information line names the implementation selected at build time.
 
 ### `interface`
 
@@ -56,19 +56,19 @@ Persist it in `/etc/sysctl.d/` and re-run `doctor`. Privacy addresses on other i
 
 ### `privileges`
 
-A warning when you run `doctor` as an ordinary user. Splice mode must add IPv6 addresses and bind its public ports. The Linux unit grants the required capabilities; the macOS and BSD services run with administrative privilege. Use `sudo` or `doas` to exercise privileged checks.
+A warning when you run `doctor` without address-management privilege. The Linux unit grants capabilities; macOS and BSD services run as root; the Windows service runs as LocalSystem. Use `sudo`, `doas`, or an Administrator PowerShell to exercise privileged checks.
 
 ### `ipv6-egress`
 
 This host cannot open an outbound IPv6 connection. Inbound publication cannot work while this fails, so fix it first. Check for an IPv6 default route:
 
-On Linux run `ip -6 route show default`; on macOS and the BSDs run `route -n get -inet6 default`.
+On Linux run `ip -6 route show default`; on macOS and the BSDs run `route -n get -inet6 default`; on Windows run `Get-NetRoute -AddressFamily IPv6 -DestinationPrefix ::/0`.
 
 Use `--offline` to skip this and every other check that leaves the host.
 
 ### `firewall`
 
-On Linux, managed mode reports that Bifrost owns the nftables policy and warns when another table can override it. Linux advisory mode audits nftables. macOS, FreeBSD, and OpenBSD support advisory mode: add service-scoped rules to the authoritative host policy yourself. Bifrost refuses managed mode there instead of editing an unowned `pf` or `ipfw` ruleset.
+On Linux, managed mode reports that Bifrost owns the nftables policy and warns when another table can override it. Linux advisory mode audits nftables. macOS, FreeBSD, OpenBSD, and Windows support advisory mode: add service-scoped rules to the authoritative host policy yourself. Bifrost refuses managed mode there instead of changing policy it does not own.
 
 Add service-scoped accepts to whichever firewall manager owns the policy. A separate Bifrost table cannot override another table's drop. See [firewall](../../networking/firewall/).
 
@@ -144,5 +144,7 @@ A warning that splice mode hides the client address from the backend. That is in
 sudo chmod 0600 /etc/bifrost/address-secret
 sudo chown bifrost:bifrost /etc/bifrost/address-secret
 ```
+
+On Windows, rerun `bifrost init --interactive` from an Administrator PowerShell so the file receives a protected ACL for LocalSystem and Administrators.
 
 **The published name works from inside the house but not outside.** The router is not forwarding inbound IPv6. Loopback from inside often bypasses it.

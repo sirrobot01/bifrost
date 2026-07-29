@@ -29,7 +29,7 @@ git tag -a v1.0.0 -m 'Bifrost v1.0.0'
 git push origin v1.0.0
 ```
 
-The release workflow builds static Linux archives for amd64, arm64, and arm/v7, plus amd64 and arm64 archives for macOS, FreeBSD, and OpenBSD. It creates `checksums.txt` and signs it with keyless Cosign through GitHub OIDC. It also publishes and signs a multi-architecture Linux image in GHCR.
+The release workflow builds static Linux archives for amd64, arm64, and arm/v7, plus amd64 and arm64 archives for macOS, FreeBSD, OpenBSD, and Windows. It creates `checksums.txt` and signs it with keyless Cosign through GitHub OIDC. It also publishes and signs a multi-architecture Linux image in GHCR.
 
 The tag starts publication. Complete all checks before you push it.
 
@@ -58,6 +58,6 @@ sha256sum --ignore-missing --check checksums.txt
 - `bifrost edge invite` and `bifrost edge join` enrol an edge without hand-written keys.
 - Edge TLS routing and one static port map work from IPv4 through home IPv6.
 - `check` reports reachability as unverified unless something outside the network confirmed it.
-- `SIGTERM` drains connections within `drain_grace`.
-- The native systemd, launchd, or rc.d service stops cleanly.
+- Unix termination signals and Windows SCM stop requests drain connections within `drain_grace`.
+- The native systemd, launchd, rc.d, or Windows service stops cleanly.
 - Metrics stay on loopback and contain no secrets.

@@ -3,11 +3,11 @@ title: Firewall and path MTU
 description: Scope inbound IPv6 to the published services and keep essential ICMPv6 working.
 ---
 
-Two firewalls sit in front of a published service. Bifrost can manage the Linux host firewall. On macOS, FreeBSD, and OpenBSD it leaves host policy advisory. It can ask the router through PCP on every supported system, but cannot insist.
+Two firewalls sit in front of a published service. Bifrost can manage the Linux host firewall. On macOS, FreeBSD, OpenBSD, and Windows it leaves host policy advisory. It can ask the router through PCP on every supported system, but cannot insist.
 
 ## Managed mode
 
-Managed mode currently requires Linux with nftables. The BSD-family implementations refuse this mode because loading an effective `pf` or `ipfw` policy requires cooperation from the host's primary ruleset; Bifrost never rewrites an unowned ruleset.
+Managed mode currently requires Linux with nftables. The other native implementations refuse this mode because Bifrost never rewrites an unowned `pf`, `ipfw`, or Windows Firewall policy.
 
 ```yaml
 firewall:
@@ -39,12 +39,18 @@ With `pcp: true`, Bifrost also asks the router to permit each published socket, 
 
 ## Advisory mode
 
-`firewall.mode: advisory` does not change policy. Linux additionally audits nftables; on macOS and the BSDs, inspect and maintain the system firewall policy separately.
+`firewall.mode: advisory` does not change policy. Linux additionally audits nftables; on macOS, the BSDs, and Windows, inspect and maintain the system firewall policy separately.
 
 Scope each rule to one service address and port:
 
 ```text
 ip6 daddr 2001:db8:1234:1::10 tcp dport 443 ct state new accept
+```
+
+The Windows equivalent, from an Administrator PowerShell, is:
+
+```powershell
+New-NetFirewallRule -DisplayName "Bifrost media" -Direction Inbound -Action Allow -Protocol TCP -LocalAddress 2001:db8:1234:1::10 -LocalPort 443
 ```
 
 Never expose the metrics listener. Bifrost requires it to bind loopback.
