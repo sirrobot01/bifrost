@@ -83,7 +83,7 @@ func (b *ifconfigBackend) Status(address netip.Addr) (AddressStatus, error) {
 	if err != nil {
 		return AddressAbsent, err
 	}
-	for _, line := range bytes.Split(output, []byte{'\n'}) {
+	for line := range bytes.Lines(output) {
 		fields := strings.Fields(string(line))
 		if len(fields) < 2 || fields[0] != "inet6" {
 			continue
@@ -110,7 +110,7 @@ func (b *ifconfigBackend) addArguments(prefix netip.Prefix) []string {
 	address := prefix.Addr().String()
 	switch b.style {
 	case IfconfigFreeBSD:
-		return []string{b.interfaceName, "inet6", prefix.String(), "alias"}
+		return []string{b.interfaceName, "inet6", address, "prefixlen", "64", "alias"}
 	case IfconfigOpenBSD:
 		return []string{b.interfaceName, "inet6", address, "prefixlen", "64", "alias"}
 	default: // darwin
@@ -122,7 +122,7 @@ func (b *ifconfigBackend) removeArguments(prefix netip.Prefix) []string {
 	address := prefix.Addr().String()
 	switch b.style {
 	case IfconfigFreeBSD:
-		return []string{b.interfaceName, "inet6", prefix.String(), "-alias"}
+		return []string{b.interfaceName, "inet6", prefix.String(), "delete"}
 	case IfconfigOpenBSD:
 		return []string{b.interfaceName, "inet6", address, "delete"}
 	default: // darwin

@@ -1,0 +1,10 @@
+#!/bin/ksh
+
+daemon="/usr/local/bin/bifrost"
+daemon_flags="serve --config /etc/bifrost/config.yaml"
+rc_bg=YES
+rc_reload=YES
+
+. /etc/rc.d/rc.subr
+
+rc_cmd "$1"

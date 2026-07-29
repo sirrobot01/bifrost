@@ -1,0 +1,18 @@
+#!/bin/sh
+# PROVIDE: bifrost_edge
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=bifrost_edge
+rcvar=bifrost_edge_enable
+load_rc_config "$name"
+: "${bifrost_edge_enable:=NO}"
+
+pidfile=/var/run/bifrost-edge.pid
+procname=/usr/local/bin/bifrost
+command=/usr/sbin/daemon
+command_args="-p ${pidfile} -t ${name} ${procname} edge --config /etc/bifrost/edge.yaml"
+
+run_rc_command "$1"

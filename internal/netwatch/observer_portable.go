@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"reflect"
+	"slices"
 	"time"
 
 	"github.com/sirrobot01/bifrost/internal/serviceaddr"
@@ -66,7 +66,7 @@ func (o *portableObserver) Observe(ctx context.Context, snapshots chan<- Snapsho
 		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(current, previous) {
+		if current.InterfaceName != previous.InterfaceName || current.InterfaceIndex != previous.InterfaceIndex || current.MTU != previous.MTU || !slices.Equal(current.Candidates, previous.Candidates) {
 			select {
 			case snapshots <- current:
 				previous = current

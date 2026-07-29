@@ -1,0 +1,9 @@
+#!/bin/ksh
+
+daemon="/usr/local/bin/bifrost"
+daemon_flags="edge --config /etc/bifrost/edge.yaml"
+rc_bg=YES
+
+. /etc/rc.d/rc.subr
+
+rc_cmd "$1"

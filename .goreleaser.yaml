@@ -34,6 +34,34 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -X main.version={{.Version}}
+  - id: bifrost-freebsd
+    main: ./cmd/bifrost
+    binary: bifrost
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: bifrost-openbsd
+    main: ./cmd/bifrost
+    binary: bifrost
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - openbsd
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
 
 archives:
   - formats:

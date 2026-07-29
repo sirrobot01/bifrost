@@ -4,7 +4,7 @@ package serviceaddr
 
 import (
 	"net/netip"
-	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -33,19 +33,27 @@ func TestIfconfigBackendStatusReadsDADState(t *testing.T) {
 
 func TestIfconfigBackendUsesPlatformArguments(t *testing.T) {
 	t.Parallel()
-	var got []string
-	backend := &ifconfigBackend{interfaceName: "test0"}
-	backend.run = func(arguments ...string) ([]byte, error) {
-		got = append([]string(nil), arguments...)
-		if len(arguments) == 2 { // Status inspection.
-			return nil, nil
-		}
-		return nil, nil
+	prefix := netip.MustParsePrefix("2001:db8::42/64")
+	tests := []struct {
+		name   string
+		style  IfconfigStyle
+		add    []string
+		remove []string
+	}{
+		{name: "macOS", style: IfconfigDarwin, add: []string{"test0", "inet6", "2001:db8::42", "prefixlen", "64", "alias"}, remove: []string{"test0", "inet6", "2001:db8::42", "-alias"}},
+		{name: "FreeBSD", style: IfconfigFreeBSD, add: []string{"test0", "inet6", "2001:db8::42", "prefixlen", "64", "alias"}, remove: []string{"test0", "inet6", "2001:db8::42/64", "delete"}},
+		{name: "OpenBSD", style: IfconfigOpenBSD, add: []string{"test0", "inet6", "2001:db8::42", "prefixlen", "64", "alias"}, remove: []string{"test0", "inet6", "2001:db8::42", "delete"}},
 	}
-	if err := backend.Ensure(netip.MustParsePrefix("2001:db8::42/64")); err != nil {
-		t.Fatal(err)
-	}
-	if len(got) < 4 || !reflect.DeepEqual(got[:2], []string{"test0", "inet6"}) {
-		t.Fatalf("ifconfig arguments = %v", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			backend := &ifconfigBackend{interfaceName: "test0", style: test.style}
+			if got := backend.addArguments(prefix); !slices.Equal(got, test.add) {
+				t.Fatalf("add arguments = %v, want %v", got, test.add)
+			}
+			if got := backend.removeArguments(prefix); !slices.Equal(got, test.remove) {
+				t.Fatalf("remove arguments = %v, want %v", got, test.remove)
+			}
+		})
 	}
 }

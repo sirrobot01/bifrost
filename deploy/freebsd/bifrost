@@ -1,0 +1,19 @@
+#!/bin/sh
+# PROVIDE: bifrost
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=bifrost
+rcvar=bifrost_enable
+load_rc_config "$name"
+: "${bifrost_enable:=NO}"
+
+pidfile=/var/run/bifrost.pid
+procname=/usr/local/bin/bifrost
+command=/usr/sbin/daemon
+command_args="-p ${pidfile} -t ${name} ${procname} serve --config /etc/bifrost/config.yaml"
+sig_reload=HUP
+
+run_rc_command "$1"
