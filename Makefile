@@ -19,6 +19,8 @@ verify: test lint
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -o /tmp/bifrost-linux-amd64 ./cmd/bifrost
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -o /tmp/bifrost-linux-arm64 ./cmd/bifrost
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build -trimpath -o /tmp/bifrost-linux-armv7 ./cmd/bifrost
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -o /tmp/bifrost-darwin-amd64 ./cmd/bifrost
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -o /tmp/bifrost-darwin-arm64 ./cmd/bifrost
 
 docs:
 	npm --prefix docs ci

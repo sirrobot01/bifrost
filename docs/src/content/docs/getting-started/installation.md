@@ -9,7 +9,7 @@ One command installs the latest release:
 curl -fsSL https://bifrost.biodun.dev/install.sh | sh
 ```
 
-The script detects the CPU and package manager, verifies the download against the release checksum file, and installs the deb or rpm package. Where neither package manager exists, it installs the archive binary to `/usr/local/bin` and prints the remaining setup steps.
+The script detects the operating system, CPU, and package manager, verifies the download against the release checksum file, and installs the deb or rpm package on Linux. On macOS, or where no Linux package manager fits, it installs the archive binary to `/usr/local/bin` and prints the remaining service setup steps.
 
 The package installs the binary at `/usr/bin/bifrost`, creates the `bifrost` and `bifrost-edge` system accounts, creates `/etc/bifrost` with mode `0755`, and installs both systemd units. It does not enable or start anything: Bifrost changes DNS records and host addresses, so the first run stays an explicit decision.
 
@@ -23,13 +23,31 @@ The rest of this page covers the alternatives to the script, release verificatio
 
 Every method ends in the same place. Pick the one that fits how you manage the host.
 
-Builds cover three CPUs. Packages use the first suffix, archives the second:
+Linux builds cover three CPUs; macOS builds cover Intel and Apple silicon. Packages use the first suffix, archives the second:
 
 | CPU | Package suffix | Archive suffix |
 |---|---|---|
 | AMD64 or Intel 64 | `amd64` | `x86_64` |
 | ARM64 | `arm64` | `aarch64` |
 | 32-bit ARM v7 | `armv7` | `armv7` |
+
+### macOS
+
+The install script selects `darwin_x86_64` on Intel or `darwin_aarch64` on Apple silicon and installs both launchd definitions without loading them. After creating the configuration with `sudo bifrost init --interactive`, load the home daemon:
+
+```sh
+sudo install -d -m 0755 /etc/bifrost /var/lib/bifrost
+sudo launchctl bootstrap system /Library/LaunchDaemons/dev.biodun.bifrost.plist
+sudo launchctl enable system/dev.biodun.bifrost
+```
+
+The daemon runs as root because macOS requires administrative privilege to add service IPv6 aliases. It writes structured logs to `/var/log/bifrost.log`. To reload a changed configuration without dropping listeners:
+
+```sh
+sudo launchctl kill HUP system/dev.biodun.bifrost
+```
+
+macOS supports advisory firewall mode. Keep `firewall.mode: advisory` and add the required address-and-port rules to the host policy yourself. `firewall.pcp` remains available when the router supports PCP. Docker discovery works with a configured Unix socket; Docker Desktop commonly uses a per-user socket, so set `docker.socket` explicitly when enabling it.
 
 ### Download the package directly
 
@@ -51,7 +69,7 @@ This is exactly what the script does, without the script. Removing the package l
 
 ### Install from an archive
 
-Use this when no package fits your distribution.
+Use this when no package fits your operating system or distribution.
 
 Archive names carry the release version, so download the one matching your CPU from the [releases page](https://github.com/sirrobot01/bifrost/releases/latest), then:
 

@@ -25,6 +25,8 @@ jobs:
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/bifrost-linux-amd64 ./cmd/bifrost
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/bifrost-linux-arm64 ./cmd/bifrost
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o /tmp/bifrost-linux-armv7 ./cmd/bifrost
+      - run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o /tmp/bifrost-darwin-amd64 ./cmd/bifrost
+      - run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/bifrost-darwin-arm64 ./cmd/bifrost
       - run: docker build --build-arg VERSION=ci .
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:

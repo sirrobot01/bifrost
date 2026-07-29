@@ -10,7 +10,7 @@ Complete these checks before you create a tag:
 - Confirm that the worktree is clean.
 - Confirm that the release commit is on `main`.
 - Confirm that `go.mod` specifies Go 1.26.
-- Run `make verify` on Linux, or confirm that the equivalent CI job passed.
+- Run `make verify` on a supported development host, and confirm native CI or smoke tests passed for every released OS.
 - Run `make docs`.
 - Run `docker build --build-arg VERSION=dev .`.
 - Run `goreleaser check`.
@@ -29,7 +29,7 @@ git tag -a v1.0.0 -m 'Bifrost v1.0.0'
 git push origin v1.0.0
 ```
 
-The release workflow builds static Linux archives for amd64, arm64, and arm/v7. It creates `checksums.txt` and signs it with keyless Cosign through GitHub OIDC. It also publishes and signs a multi-architecture image in GHCR.
+The release workflow builds static Linux archives for amd64, arm64, and arm/v7, plus macOS archives for Intel and Apple silicon. It creates `checksums.txt` and signs it with keyless Cosign through GitHub OIDC. It also publishes and signs a multi-architecture Linux image in GHCR.
 
 The tag starts publication. Complete all checks before you push it.
 
@@ -59,5 +59,5 @@ sha256sum --ignore-missing --check checksums.txt
 - Edge TLS routing and one static port map work from IPv4 through home IPv6.
 - `check` reports reachability as unverified unless something outside the network confirmed it.
 - `SIGTERM` drains connections within `drain_grace`.
-- The systemd service stops cleanly.
+- The native systemd or launchd service stops cleanly.
 - Metrics stay on loopback and contain no secrets.

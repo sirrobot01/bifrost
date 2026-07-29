@@ -23,7 +23,11 @@ fail() {
 	exit 1
 }
 
-[ "$(uname -s)" = "Linux" ] || fail "Bifrost runs on Linux; see https://bifrost.biodun.dev for the container image"
+case "$(uname -s)" in
+Linux) release_os=linux ;;
+Darwin) release_os=darwin ;;
+*) fail "unsupported operating system $(uname -s); releases currently cover Linux and macOS" ;;
+esac
 
 case "$(uname -m)" in
 x86_64) package_arch=amd64 archive_arch=x86_64 ;;
@@ -40,7 +44,13 @@ else
 	fail "curl or wget is required"
 fi
 
-command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify the download"
+if command -v sha256sum >/dev/null 2>&1; then
+	verify_checksum() { grep " $1\$" "$workdir/checksums.txt" | (cd "$workdir" && sha256sum -c -); }
+elif command -v shasum >/dev/null 2>&1; then
+	verify_checksum() { grep " $1\$" "$workdir/checksums.txt" | (cd "$workdir" && shasum -a 256 -c -); }
+else
+	fail "sha256sum or shasum is required to verify the download"
+fi
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -48,9 +58,9 @@ if [ "$(id -u)" -ne 0 ]; then
 	SUDO="sudo"
 fi
 
-if command -v apt-get >/dev/null 2>&1; then
+if [ "$release_os" = linux ] && command -v apt-get >/dev/null 2>&1; then
 	flavor=deb
-elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+elif [ "$release_os" = linux ] && { command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; }; then
 	flavor=rpm
 else
 	flavor=archive
@@ -68,7 +78,7 @@ deb | rpm)
 archive)
 	# Archive names carry the release version; read it from the checksum file
 	# rather than asking the GitHub API.
-	artifact="$(awk -v pattern="^bifrost_.*_linux_$archive_arch\\\\.tar\\\\.gz$" \
+	artifact="$(awk -v pattern="^bifrost_.*_${release_os}_$archive_arch\\\\.tar\\\\.gz$" \
 		'$2 ~ pattern { print $2; exit }' "$workdir/checksums.txt")"
 	[ -n "$artifact" ] || fail "no archive for $archive_arch in the latest release"
 	;;
@@ -76,7 +86,7 @@ esac
 
 echo "downloading $artifact"
 fetch "$DOWNLOAD/$artifact" "$workdir/$artifact"
-(cd "$workdir" && grep " $artifact\$" checksums.txt | sha256sum -c -) ||
+verify_checksum "$artifact" ||
 	fail "checksum verification failed for $artifact"
 
 case "$flavor" in
@@ -91,10 +101,19 @@ rpm)
 	fi
 	;;
 archive)
-	tar -xzf "$workdir/$artifact" -C "$workdir" bifrost
+	if [ "$release_os" = darwin ]; then
+		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost deploy/dev.biodun.bifrost.plist deploy/dev.biodun.bifrost-edge.plist
+	else
+		tar -xzf "$workdir/$artifact" -C "$workdir" bifrost
+	fi
 	$SUDO install -m 0755 "$workdir/bifrost" /usr/local/bin/bifrost
 	echo "installed /usr/local/bin/bifrost"
-	echo "the archive does not create the service account or systemd unit;"
+	if [ "$release_os" = darwin ]; then
+		$SUDO install -m 0644 "$workdir/deploy/dev.biodun.bifrost.plist" /Library/LaunchDaemons/dev.biodun.bifrost.plist
+		$SUDO install -m 0644 "$workdir/deploy/dev.biodun.bifrost-edge.plist" /Library/LaunchDaemons/dev.biodun.bifrost-edge.plist
+		echo "installed launchd definitions without loading them"
+	fi
+	echo "the archive does not install an operating-system service;"
 	echo "follow https://bifrost.biodun.dev/getting-started/installation/#install-from-an-archive"
 	;;
 esac

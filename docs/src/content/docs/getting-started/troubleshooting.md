@@ -18,7 +18,7 @@ Findings are `INFO`, `WARNING`, or `ERROR`. Only errors block publication. A war
 
 ### `platform`
 
-The home role manages addresses on a Linux interface and has no equivalent elsewhere. Run it on the Linux host that owns the public IPv6 addresses.
+The home role runs natively on Linux and macOS. The information line names the detected platform. Other operating systems are rejected before configuration is changed.
 
 ### `interface`
 
@@ -56,21 +56,19 @@ Persist it in `/etc/sysctl.d/` and re-run `doctor`. Privacy addresses on other i
 
 ### `privileges`
 
-A warning when you run `doctor` as an ordinary user. Splice mode needs `CAP_NET_ADMIN` and ports below 1024 need `CAP_NET_BIND_SERVICE`. The supplied systemd unit grants both, so this warning does not apply to the running service. Use `sudo` to exercise privileged checks.
+A warning when you run `doctor` as an ordinary user. Splice mode must add IPv6 addresses and bind its public ports. The Linux systemd unit grants the required capabilities; the macOS launch daemon runs with administrative privilege. Use `sudo` to exercise privileged checks.
 
 ### `ipv6-egress`
 
 This host cannot open an outbound IPv6 connection. Inbound publication cannot work while this fails, so fix it first. Check for an IPv6 default route:
 
-```sh
-ip -6 route show default
-```
+On Linux run `ip -6 route show default`; on macOS run `route -n get -inet6 default`.
 
 Use `--offline` to skip this and every other check that leaves the host.
 
 ### `firewall`
 
-In managed mode this reports that Bifrost owns the policy, and warns when another table's drop policy can override it. In advisory mode Bifrost only reads nftables and reports an authoritative input chain that could drop inbound IPv6, or reports that nothing filters inbound IPv6 at all: on a router that permits all inbound IPv6, that means every listening port on the host is reachable from the internet, not only the published services. Switching to `firewall.mode: managed` is the fix.
+On Linux, managed mode reports that Bifrost owns the nftables policy and warns when another table can override it. Linux advisory mode audits nftables. macOS supports advisory mode: add service-scoped rules to the host policy yourself. Bifrost refuses `firewall.mode: managed` there instead of editing an unowned `pf` ruleset.
 
 Add service-scoped accepts to whichever firewall manager owns the policy. A separate Bifrost table cannot override another table's drop. See [firewall](../../networking/firewall/).
 
@@ -94,7 +92,7 @@ Reported only when you pass `--docker-socket`. Docker socket access grants root-
 
 ### `address`
 
-The derived service address is missing from the host. The service is not running, or it has not reconciled yet. Read `systemctl status bifrost` and the daemon logs.
+The derived service address is missing from the host. The service is not running, or it has not reconciled yet. On Linux read `systemctl status bifrost`; on macOS read `/var/log/bifrost.log` and `launchctl print system/dev.biodun.bifrost`.
 
 ### `tls`
 

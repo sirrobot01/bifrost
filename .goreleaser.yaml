@@ -3,7 +3,7 @@ version: 2
 project_name: bifrost
 
 builds:
-  - id: bifrost
+  - id: bifrost-linux
     main: ./cmd/bifrost
     binary: bifrost
     env:
@@ -16,6 +16,20 @@ builds:
       - arm
     goarm:
       - "7"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: bifrost-darwin
+    main: ./cmd/bifrost
+    binary: bifrost
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
     flags:
       - -trimpath
     ldflags:
@@ -41,6 +55,8 @@ archives:
 
 nfpms:
   - id: bifrost
+    ids:
+      - bifrost-linux
     # Debian and Ubuntu already ship a package called `bifrost`: an unrelated
     # bioinformatics tool whose version sorts above ours. Sharing the name meant
     # `apt upgrade` treated that package as a newer Bifrost and replaced this

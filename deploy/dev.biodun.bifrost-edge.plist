@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.biodun.bifrost-edge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/bifrost</string>
+    <string>edge</string>
+    <string>--config</string>
+    <string>/etc/bifrost/edge.yaml</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/var/log/bifrost-edge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/bifrost-edge.log</string>
+</dict>
+</plist>
