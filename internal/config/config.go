@@ -70,6 +70,11 @@ type ACME struct {
 	Directory string `yaml:"directory,omitempty"`
 	// StateDir holds the account key and issued certificates.
 	StateDir string `yaml:"state_dir"`
+	// Wildcard issues one certificate per parent domain rather than one per
+	// name. A new service then reuses the certificate its siblings already
+	// have, instead of spending an ACME round trip and part of the CA's rate
+	// limit. Only correct when the parent is a zone you control.
+	Wildcard bool `yaml:"wildcard,omitempty"`
 }
 
 type DNS struct {

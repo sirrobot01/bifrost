@@ -141,6 +141,7 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		Email:        configFile.ACME.Email,
 		DirectoryURL: configFile.ACME.Directory,
 		ChallengeTTL: configFile.DNS.TTL.Duration(),
+		Wildcard:     configFile.ACME.Wildcard,
 		Logger:       logger,
 	})
 	if err != nil {

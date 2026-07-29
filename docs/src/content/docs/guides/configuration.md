@@ -170,8 +170,24 @@ acme:
 | `email` | Optional. Receives expiry warnings from the certificate authority. |
 | `directory` | Optional ACME directory URL; empty means Let's Encrypt. Use the Let's Encrypt staging URL to test without rate limits. |
 | `state_dir` | Holds the ACME account key and issued certificates. The packages create `/var/lib/bifrost` through systemd. |
+| `wildcard` | Optional. Issue one certificate per parent domain instead of one per name. |
 
 The challenge TXT records use `dns.ttl`, so provider minimums such as deSEC's 3600-second floor hold for challenges too. A service with `tls: off` never touches ACME.
+
+### Wildcard certificates
+
+```yaml
+acme:
+  wildcard: true
+```
+
+`media.example.com` and `photos.example.com` then share one `*.example.com` certificate. Adding a third service under that parent costs no ACME order at all, and renewals are one order instead of one per name — which matters because Let's Encrypt rate-limits per registered domain.
+
+A wildcard matches exactly one label. `*.example.com` covers `media.example.com` but not `cam.house.example.com`, which gets its own `*.house.example.com`. A two-label name such as `example.com` keeps its own certificate, since `*.com` is not issuable.
+
+Only enable this when the parent is a zone you control. It is off by default because that is not true of every name — a shared suffix would produce a wildcard no CA will sign.
+
+Existing per-name certificates stay on disk and are ignored. Switching back is equally safe.
 
 Requesting a certificate accepts the certificate authority's subscriber agreement on your behalf, as every ACME client does. No account setup is needed: Bifrost creates and stores the ACME account key itself. Let's Encrypt rate-limits issuance per domain; when testing repeatedly, set `directory` to the [staging environment](https://letsencrypt.org/docs/staging-environment/) first.
 

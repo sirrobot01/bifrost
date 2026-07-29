@@ -42,8 +42,14 @@ type Config struct {
 	// ChallengeTTL is the TTL for challenge TXT records. It follows dns.ttl so
 	// provider minimums (deSEC enforces 3600s) hold for challenges too.
 	ChallengeTTL time.Duration
-	Logger       *slog.Logger
-	Now          func() time.Time
+	// Wildcard issues one certificate per parent domain instead of one per
+	// name, so a new service reuses the certificate its siblings already have
+	// rather than costing an ACME round trip and a slice of the CA's rate
+	// limit. Opt-in, because it only makes sense when the parent is a zone the
+	// operator controls.
+	Wildcard bool
+	Logger   *slog.Logger
+	Now      func() time.Time
 	// issue overrides the ACME flow in tests.
 	issue issueFunc
 }
@@ -94,7 +100,7 @@ func NewManager(config Config) (*Manager, error) {
 // Concurrent calls for the same name share one issuance; different names
 // issue independently.
 func (m *Manager) Certificate(ctx context.Context, name string) (*tls.Certificate, error) {
-	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	name = m.subject(name)
 	if certificate, ok := m.cached(name); ok && !m.needsRenewal(certificate) {
 		return certificate, nil
 	}
@@ -164,7 +170,7 @@ func (m *Manager) Expiries() map[string]time.Time {
 // TLSConfig serves name's current certificate. The callback only reads the
 // cache, so renewals swap certificates without touching the listener.
 func (m *Manager) TLSConfig(name string) *tls.Config {
-	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	name = m.subject(name)
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"http/1.1"},
@@ -241,12 +247,49 @@ func (m *Manager) load(name string) (*tls.Certificate, error) {
 	return parseCertificate(certificatePEM, keyPEM)
 }
 
+// subject is the certificate identity that covers name: the name itself, or
+// the wildcard over its parent when wildcard issuance is enabled.
+func (m *Manager) subject(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if !m.config.Wildcard {
+		return name
+	}
+	wildcard, ok := wildcardSubject(name)
+	if !ok {
+		return name
+	}
+	return wildcard
+}
+
+// wildcardSubject maps a host name onto the wildcard that covers it.
+//
+// A wildcard matches exactly one label, so only the leftmost is replaced:
+// `*.example.com` covers `media.example.com` but not `a.b.example.com`, which
+// gets `*.b.example.com` instead. A two-label name has no parent worth
+// wildcarding -- `*.com` is not issuable -- so it keeps its own certificate.
+func wildcardSubject(name string) (string, bool) {
+	if strings.HasPrefix(name, "*.") {
+		return name, true
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 3 {
+		return "", false
+	}
+	return "*." + strings.Join(labels[1:], "."), true
+}
+
+// storageName keeps a wildcard out of a file name, where an asterisk is legal
+// but reads as a glob to everything that later looks at the directory.
+func storageName(name string) string {
+	return strings.Replace(name, "*.", "_wildcard.", 1)
+}
+
 func (m *Manager) certificatePath(name string) string {
-	return filepath.Join(m.config.StateDir, name+".crt")
+	return filepath.Join(m.config.StateDir, storageName(name)+".crt")
 }
 
 func (m *Manager) keyPath(name string) string {
-	return filepath.Join(m.config.StateDir, name+".key")
+	return filepath.Join(m.config.StateDir, storageName(name)+".key")
 }
 
 func parseCertificate(certificatePEM, keyPEM []byte) (*tls.Certificate, error) {

@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -167,5 +169,124 @@ func TestManagerLoadsFromDiskAndProtectsKeys(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+// The point of wildcard issuance: several services under one parent cost one
+// ACME order, not one each.
+func TestManagerIssuesOneWildcardForSiblingNames(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var issuedFor []string
+	manager, err := NewManager(Config{
+		StateDir: t.TempDir(),
+		Wildcard: true,
+		Now:      func() time.Time { return now },
+		issue: func(_ context.Context, name string) ([]byte, []byte, error) {
+			issuedFor = append(issuedFor, name)
+			certificatePEM, keyPEM := selfSigned(t, name, now.Add(90*24*time.Hour))
+			return certificatePEM, keyPEM, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"media.example.com", "photos.example.com", "books.example.com"} {
+		if _, err := manager.Certificate(t.Context(), name); err != nil {
+			t.Fatalf("Certificate(%s): %v", name, err)
+		}
+	}
+	if len(issuedFor) != 1 || issuedFor[0] != "*.example.com" {
+		t.Fatalf("issued %v, want one order for *.example.com", issuedFor)
+	}
+
+	// A deeper name is not covered by the parent wildcard, so it gets its own.
+	if _, err := manager.Certificate(t.Context(), "cam.house.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if len(issuedFor) != 2 || issuedFor[1] != "*.house.example.com" {
+		t.Fatalf("issued %v, want a second order for *.house.example.com", issuedFor)
+	}
+}
+
+// A wildcard never reaches a file name, where an asterisk reads as a glob.
+func TestManagerStoresWildcardsUnderASafeFileName(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	directory := t.TempDir()
+	manager, err := NewManager(Config{
+		StateDir: directory,
+		Wildcard: true,
+		Now:      func() time.Time { return now },
+		issue: func(_ context.Context, name string) ([]byte, []byte, error) {
+			certificatePEM, keyPEM := selfSigned(t, name, now.Add(90*24*time.Hour))
+			return certificatePEM, keyPEM, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Certificate(t.Context(), "media.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+		if strings.Contains(entry.Name(), "*") {
+			t.Fatalf("state directory holds %q", entry.Name())
+		}
+	}
+	if !slices.Contains(names, "_wildcard.example.com.crt") {
+		t.Fatalf("state directory = %v", names)
+	}
+}
+
+// Without the setting, nothing changes: one certificate per published name.
+func TestManagerKeepsPerNameCertificatesByDefault(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	var issuedFor []string
+	manager, err := NewManager(Config{
+		StateDir: t.TempDir(),
+		Now:      func() time.Time { return now },
+		issue: func(_ context.Context, name string) ([]byte, []byte, error) {
+			issuedFor = append(issuedFor, name)
+			certificatePEM, keyPEM := selfSigned(t, name, now.Add(90*24*time.Hour))
+			return certificatePEM, keyPEM, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"media.example.com", "photos.example.com"} {
+		if _, err := manager.Certificate(t.Context(), name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(issuedFor) != 2 {
+		t.Fatalf("issued %v, want one per name", issuedFor)
+	}
+}
+
+// A two-label name has no parent worth wildcarding, since *.com is not
+// issuable.
+func TestWildcardSubjectLeavesShortNamesAlone(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := wildcardSubject("example.com"); ok {
+		t.Fatal("example.com was wildcarded")
+	}
+	if subject, ok := wildcardSubject("a.b.example.com"); !ok || subject != "*.b.example.com" {
+		t.Fatalf("wildcardSubject(a.b.example.com) = %q, %v", subject, ok)
+	}
+	if subject, ok := wildcardSubject("*.example.com"); !ok || subject != "*.example.com" {
+		t.Fatalf("an existing wildcard was rewritten to %q", subject)
 	}
 }

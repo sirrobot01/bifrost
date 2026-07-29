@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/acme"
@@ -104,7 +105,9 @@ func (m *Manager) solveAuthorization(ctx context.Context, client *acme.Client, n
 	if err != nil {
 		return err
 	}
-	challengeName := "_acme-challenge." + name
+	// RFC 8555: the challenge for a wildcard lives at the parent's record name,
+	// with no asterisk in it.
+	challengeName := "_acme-challenge." + strings.TrimPrefix(name, "*.")
 	record, err := m.config.Provider.Create(ctx, dnspublish.Record{
 		Type:    dnspublish.RecordTXT,
 		Name:    challengeName,
