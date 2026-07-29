@@ -47,6 +47,9 @@ type Runtime struct {
 	lastError    string
 	ready        bool
 	lastPrefix   netip.Prefix
+	// reloads carries a validated configuration into the run loop. Applying it
+	// anywhere else would race the reconcile that is using the old one.
+	reloads chan config.Config
 }
 
 func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error) {
@@ -224,7 +227,54 @@ func NewRuntime(configFile config.Config, logger *slog.Logger) (*Runtime, error)
 		return nil, err
 	}
 	runtime.metrics = metricsServer
+	runtime.reloads = make(chan config.Config, 1)
 	return runtime, nil
+}
+
+// Reload replaces the running configuration with next. It rejects a change that
+// cannot be applied in place rather than applying part of it, so a daemon never
+// ends up disagreeing with its own file.
+func (r *Runtime) Reload(next config.Config) error {
+	next.ApplyDefaults()
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	r.stateMu.RLock()
+	current := r.config
+	r.stateMu.RUnlock()
+	if err := current.Reloadable(next); err != nil {
+		return err
+	}
+	select {
+	case r.reloads <- next:
+		return nil
+	default:
+		return errors.New("a reload is already pending")
+	}
+}
+
+// applyReload swaps the configuration in and returns whether the published
+// services need reconciling.
+func (r *Runtime) applyReload(ctx context.Context, next config.Config) bool {
+	r.stateMu.Lock()
+	previous := r.config
+	r.config = next
+	r.stateMu.Unlock()
+
+	r.controller.Reconfigure(next.DNS.TTL.Duration(), next.DrainGrace.Duration(), hostfw.Spec{
+		TrustedInterfaces: next.Firewall.TrustedInterfaces,
+		AllowPorts:        next.Firewall.AllowPorts,
+	})
+	if err := r.refreshServices(ctx); err != nil {
+		r.logger.Error("reload could not rebuild the service list", "error", err)
+		// The previous list is still live and correct, so keep serving it.
+		r.stateMu.Lock()
+		r.config = previous
+		r.stateMu.Unlock()
+		return false
+	}
+	r.logger.Info("reloaded configuration", "services", len(r.services))
+	return true
 }
 
 func (r *Runtime) DryRun(ctx context.Context) ([]Action, error) {
@@ -332,6 +382,24 @@ func (r *Runtime) Run(ctx context.Context) error {
 				}
 			}
 			settleTimer.Reset(r.config.SettleWindow.Duration())
+		case next := <-r.reloads:
+			if !r.applyReload(ctx, next) {
+				continue
+			}
+			externalCheck.Reset(r.config.Verify.Interval.Duration())
+			if latest.InterfaceName != "" {
+				pending = true
+				consecutiveFailures = 0
+				if !settleTimer.Stop() {
+					select {
+					case <-settleTimer.C:
+					default:
+					}
+				}
+				// A reload is an operator action, so converge promptly rather
+				// than waiting out a settle window meant for network churn.
+				settleTimer.Reset(time.Millisecond)
+			}
 		case <-dockerChanges:
 			if err := r.refreshServices(ctx); err != nil {
 				r.logger.Error("Docker reconciliation failed", "error", err)

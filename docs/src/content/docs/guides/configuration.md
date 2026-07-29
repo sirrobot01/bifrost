@@ -330,6 +330,26 @@ static_maps:
 
 Each `allow` entry must be a DNS name. Each static map target must contain a DNS name and port. A static map port must not equal the TLS listener port.
 
+## Apply a change without a restart
+
+```sh
+sudo systemctl reload bifrost
+```
+
+A restart withdraws every DNS record and drops every connection before it starts again. A reload re-reads the file and reconciles the difference, so adding a service leaves the others untouched.
+
+Reloadable: `static_services`, `dns.ttl`, `settle_window`, `drain_grace`, `verify.interval`, and the `firewall` allowances (`allow_ports`, `trusted_interfaces`).
+
+Everything else was consumed while building the daemon — the interface, the address secret, the DNS credentials, `metrics.listen`, `docker`, `acme`, `edge`, `notify`, `probe.endpoint`, `firewall.mode`, and `firewall.pcp` — and needs a restart. A reload that touches one of them is rejected whole and names the fields, rather than applying half of it.
+
+A file that fails to parse or validate is also rejected, and the running configuration keeps serving. Check the log after reloading:
+
+```sh
+journalctl -u bifrost -n 20
+```
+
+Without systemd, send `SIGHUP` to the process directly.
+
 ## Watch a running deployment
 
 `check` answers whether services are reachable once, while you are setting the host up. The daemon keeps asking:

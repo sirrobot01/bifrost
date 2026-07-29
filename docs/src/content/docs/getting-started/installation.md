@@ -124,6 +124,8 @@ sudo systemctl restart bifrost-edge     # edge
 sudo bifrost check --config /etc/bifrost/config.yaml
 ```
 
+Configuration changes do not need a restart at all: `sudo systemctl reload bifrost` re-reads the file and reconciles the difference. See [configuration](../../guides/configuration/).
+
 Restarting the edge only drops connections in flight. Restarting home removes owned DNS records and managed addresses first, so it can interrupt service briefly, and resolver caches can extend that past the configured TTL.
 
 Upgrade home and edge hosts to the same version. The edge header carries a fixed version byte with no negotiation, so a mismatched pair has nothing that would warn you if the frame format ever changes.

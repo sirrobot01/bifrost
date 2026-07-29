@@ -126,6 +126,19 @@ type Controller struct {
 	selectedPrefix atomic.Pointer[netip.Prefix]
 }
 
+// Reconfigure applies the settings a reload may change. It takes mu because
+// the next reconcile must see all of them or none.
+func (c *Controller) Reconfigure(ttl, drainGrace time.Duration, allowances hostfw.Spec) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.config.TTL = ttl
+	c.config.DrainGrace = drainGrace
+	c.config.FirewallAllowances = allowances
+	// The managed table is rebuilt from the new allowances on the next
+	// reconcile, so the cached spec must not suppress that as unchanged.
+	c.firewallApplied = false
+}
+
 // SelectedPrefix reports the prefix currently published from, or the zero value
 // before the first successful reconcile.
 func (c *Controller) SelectedPrefix() netip.Prefix {

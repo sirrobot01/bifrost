@@ -145,7 +145,7 @@ func (r Runner) runServe(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return platformServe(ctx, configFile, *dryRun, slog.New(handler), r.Stdout)
+	return platformServe(ctx, *configPath, configFile, *dryRun, slog.New(handler), r.Stdout)
 }
 
 func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {

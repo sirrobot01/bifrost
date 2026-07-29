@@ -35,6 +35,6 @@ func platformSnapshot(interfaceName string) (netwatch.Snapshot, error) {
 	return snapshot, nil
 }
 
-func platformServe(context.Context, config.Config, bool, *slog.Logger, io.Writer) error {
+func platformServe(context.Context, string, config.Config, bool, *slog.Logger, io.Writer) error {
 	return errors.New("the Bifrost home runtime requires Linux")
 }
