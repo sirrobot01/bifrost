@@ -346,6 +346,27 @@ static_maps:
 
 Each `allow` entry must be a DNS name. Each static map target must contain a DNS name and port. A static map port must not equal the TLS listener port.
 
+## Add a service in one command
+
+```sh
+sudo bifrost publish photos.example.com 127.0.0.1:2283
+```
+
+This appends the service to `/etc/bifrost/config.yaml` and reloads the daemon. The service name comes from the first label, the public port defaults to 443, and TLS is terminated by Bifrost.
+
+| Flag | Purpose |
+|---|---|
+| `--name` | Service ID, when the first label is not what you want. |
+| `--listen` | Public TCP port. |
+| `--tls off` | Pass raw TCP to a backend that speaks TLS itself. |
+| `--edge` | Also publish through the configured IPv4 edge. |
+| `--dry-run` | Print the block without writing it. |
+| `--no-reload` | Write the file and leave the daemon alone. |
+
+The file is edited in place rather than rewritten from the parsed configuration, so comments and ordering survive. The result is parsed before it replaces the original, and a duplicate name or DNS name is refused before anything is written.
+
+Flags must come before the two positional arguments.
+
 ## Apply a change without a restart
 
 ```sh

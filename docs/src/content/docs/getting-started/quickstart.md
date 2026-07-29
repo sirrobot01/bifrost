@@ -165,5 +165,5 @@ Bifrost does not authenticate users. Anyone who reaches the name gets the applic
 ## Next
 
 - IPv4-only clients cannot reach this service. Add the [IPv4 edge](../../networking/edge/) if they need to.
-- Add more services under `static_services` in `/etc/bifrost/config.yaml`, or enable [Docker discovery](../../guides/configuration/).
+- Add more services with `sudo bifrost publish <name> <backend>`, or enable [Docker discovery](../../guides/configuration/).
 - Read the [configuration guide](../../guides/configuration/) for every field.
