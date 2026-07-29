@@ -25,7 +25,7 @@ func releaseArchive(t *testing.T, binary string) []byte {
 	writer := tar.NewWriter(compressor)
 	for _, file := range []struct{ name, body string }{
 		{"LICENSE", "MIT"},
-		{"bifrost", binary},
+		{executableName(), binary},
 	} {
 		if err := writer.WriteHeader(&tar.Header{Name: file.name, Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(file.body))}); err != nil {
 			t.Fatal(err)
@@ -144,6 +144,9 @@ func TestLatestReportsAMissingPlatform(t *testing.T) {
 // process doing the upgrade is running the file it overwrites.
 func TestReplaceKeepsModeAndReplacesAtomically(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows upgrades are performed by install.ps1")
+	}
 
 	directory := t.TempDir()
 	path := filepath.Join(directory, "bifrost")
@@ -184,6 +187,9 @@ func TestReplaceKeepsModeAndReplacesAtomically(t *testing.T) {
 // must update the target rather than replace the link with a regular file.
 func TestReplaceFollowsASymlink(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows upgrades are performed by install.ps1")
+	}
 
 	directory := t.TempDir()
 	target := filepath.Join(directory, "bifrost-real")

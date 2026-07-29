@@ -43,7 +43,7 @@ func (r Runner) runUpgrade(ctx context.Context, arguments []string) error {
 	}
 	if *checkOnly {
 		if current != latest {
-			_, err := fmt.Fprintf(r.Stdout, "\nUpgrade with: sudo bifrost upgrade\n")
+			_, err := fmt.Fprintf(r.Stdout, "\nUpgrade with: %s\n", elevatedCommand("bifrost upgrade"))
 			return err
 		}
 		return nil

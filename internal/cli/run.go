@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func (r Runner) runEdge(ctx context.Context, arguments []string) error {
 	}
 	flags := flag.NewFlagSet("edge", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/edge.yaml", "edge config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "edge.yaml"), "edge config file")
 	logFormat := flags.String("log-format", "json", "json or text")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -125,7 +126,7 @@ func (r Runner) runEdge(ctx context.Context, arguments []string) error {
 func (r Runner) runServe(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "config.yaml"), "config file")
 	dryRun := flags.Bool("dry-run", false, "print the reconciliation plan without mutations")
 	logFormat := flags.String("log-format", "json", "json or text")
 	if err := flags.Parse(arguments); err != nil {
@@ -153,7 +154,7 @@ func (r Runner) runServe(ctx context.Context, arguments []string) error {
 func (r Runner) runCheck(ctx context.Context, arguments []string) (int, error) {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "config.yaml"), "config file")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	requireExternal := flags.Bool("require-external", false, "fail unless the services answered from outside this network")
 	if err := flags.Parse(arguments); err != nil {
@@ -246,7 +247,7 @@ func externalProber(configFile config.Config) (diagnose.ExternalProber, error) {
 func (r Runner) runStatus(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "config.yaml"), "config file")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	offline := flags.Bool("offline", false, "derive desired state without contacting the daemon")
 	if err := flags.Parse(arguments); err != nil {

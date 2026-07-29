@@ -25,6 +25,8 @@ verify: test lint
 	CGO_ENABLED=0 GOOS=freebsd GOARCH=arm64 $(GO) build -trimpath -o /tmp/bifrost-freebsd-arm64 ./cmd/bifrost
 	CGO_ENABLED=0 GOOS=openbsd GOARCH=amd64 $(GO) build -trimpath -o /tmp/bifrost-openbsd-amd64 ./cmd/bifrost
 	CGO_ENABLED=0 GOOS=openbsd GOARCH=arm64 $(GO) build -trimpath -o /tmp/bifrost-openbsd-arm64 ./cmd/bifrost
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -o /tmp/bifrost-windows-amd64.exe ./cmd/bifrost
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -o /tmp/bifrost-windows-arm64.exe ./cmd/bifrost
 
 docs:
 	npm --prefix docs ci

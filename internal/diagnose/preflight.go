@@ -144,8 +144,7 @@ func (c *Checker) dockerFinding(ctx context.Context, socket string) (Finding, bo
 	if socket == "" {
 		return Finding{}, false
 	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	connection, err := dialer.DialContext(ctx, "unix", socket)
+	connection, err := dialDockerSocket(ctx, socket)
 	if err != nil {
 		return Finding{
 			Check:       "docker",

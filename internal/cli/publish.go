@@ -17,7 +17,7 @@ import (
 func (r Runner) runPublish(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("publish", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/config.yaml", "config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "config.yaml"), "config file")
 	name := flags.String("name", "", "service ID (default: the first label of the DNS name)")
 	listen := flags.Uint("listen", 443, "public TCP port")
 	tls := flags.String("tls", "auto", "auto to terminate TLS, off for a backend that speaks TLS itself")
@@ -187,7 +187,7 @@ func writeConfigIfValid(path, contents string) error {
 	if err := os.Chmod(name, info.Mode().Perm()); err != nil {
 		return err
 	}
-	if err := matchConfigOwnership(name, info); err != nil {
+	if err := matchConfigOwnership(name, path, info); err != nil {
 		return err
 	}
 	return os.Rename(name, path)
@@ -205,7 +205,7 @@ func (r Runner) reloadAfterPublish(ctx context.Context) error {
 	if err := services.Reload(ctx, platform.HomeService); err != nil {
 		return fmt.Errorf("reload bifrost: %w", err)
 	}
-	_, err := fmt.Fprintln(r.Stdout, "Reloaded bifrost. Confirm with: sudo bifrost check")
+	_, err := fmt.Fprintln(r.Stdout, "Reloaded bifrost. Confirm with: "+elevatedCommand("bifrost check"))
 	return err
 }
 

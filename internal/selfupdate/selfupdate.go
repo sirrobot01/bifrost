@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -163,7 +162,7 @@ func extractBinary(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read archive: %w", err)
 		}
-		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "bifrost" || strings.Contains(header.Name, "/") {
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != executableName() || strings.Contains(header.Name, "/") {
 			continue
 		}
 		contents, err := io.ReadAll(io.LimitReader(reader, maxArchiveSize))
@@ -172,48 +171,5 @@ func extractBinary(archive []byte) ([]byte, error) {
 		}
 		return contents, nil
 	}
-	return nil, errors.New("the archive contains no bifrost executable")
-}
-
-// Replace swaps contents into path atomically, keeping the existing file's mode
-// and ownership.
-//
-// The new file is written beside the target and renamed over it. Writing the
-// path directly would fail with ETXTBSY while the old binary is running, and a
-// rename also means an interrupted update leaves the old binary intact.
-func Replace(path string, contents []byte) error {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", path, err)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return err
-	}
-
-	temporary, err := os.CreateTemp(filepath.Dir(resolved), ".bifrost-update-*")
-	if err != nil {
-		return fmt.Errorf("write beside %s: %w", resolved, err)
-	}
-	name := temporary.Name()
-	defer func() { _ = os.Remove(name) }()
-
-	if _, err := temporary.Write(contents); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(name, info.Mode().Perm()); err != nil {
-		return err
-	}
-	if err := matchOwnership(name, info); err != nil {
-		return err
-	}
-	return os.Rename(name, resolved)
+	return nil, fmt.Errorf("the archive contains no %s executable", executableName())
 }

@@ -8,10 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/sirrobot01/bifrost/internal/config"
@@ -20,9 +18,6 @@ import (
 )
 
 const (
-	// defaultConfigDir is where the packages and the systemd unit expect the
-	// configuration and its secrets to live.
-	defaultConfigDir = "/etc/bifrost"
 	// serviceAccount owns those files when init runs as root.
 	serviceAccount = "bifrost"
 	// addressSecretBytes is the entropy behind the address-derivation secret.
@@ -30,6 +25,8 @@ const (
 	// this yields a 64 byte secret.
 	addressSecretBytes = 32
 )
+
+var defaultConfigDir = platformConfigDirectory()
 
 // pendingFile is a file init intends to create. Collecting them before any
 // write lets init show the operator the whole plan and lets a refusal leave the
@@ -385,40 +382,10 @@ func writeInitNextSteps(prompt *prompter, configPath string, service config.Stat
 	}
 	_ = prompt.say("")
 	_ = prompt.say("Next:")
-	_ = prompt.say("  sudo bifrost serve --config %s --dry-run   # review the planned changes", configPath)
+	_ = prompt.say("  %s", elevatedCommand("bifrost serve --config \""+configPath+"\" --dry-run")+"   # review the planned changes")
 	_ = prompt.say("  %s", host.Services().StartAdvice(platform.HomeService))
-	_ = prompt.say("  sudo bifrost check --config %s             # confirm the published path", configPath)
+	_ = prompt.say("  %s", elevatedCommand("bifrost check --config \""+configPath+"\"")+"             # confirm the published path")
 	return nil
-}
-
-// applyServiceOwnership hands the created files to the service account when
-// init runs as root and that account exists. It reports whether ownership was
-// transferred so the caller can tell the operator to do it themselves.
-func applyServiceOwnership(configDir string, files []pendingFile) (bool, error) {
-	if os.Geteuid() != 0 {
-		return false, nil
-	}
-	account, err := user.Lookup(serviceAccount)
-	if err != nil {
-		return false, nil
-	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return false, nil
-	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
-		return false, nil
-	}
-	if err := os.Chown(configDir, uid, gid); err != nil {
-		return false, fmt.Errorf("set ownership of %s: %w", configDir, err)
-	}
-	for _, file := range files {
-		if err := os.Chown(file.path, uid, gid); err != nil {
-			return false, fmt.Errorf("set ownership of %s: %w", file.path, err)
-		}
-	}
-	return true, nil
 }
 
 func writePendingFile(file pendingFile, force bool) error {
@@ -445,7 +412,7 @@ func writePendingFile(file pendingFile, force bool) error {
 	if err := os.Chmod(file.path, file.mode); err != nil {
 		return fmt.Errorf("set permissions on %s: %w", file.path, err)
 	}
-	return nil
+	return protectConfigPath(file.path)
 }
 
 func generateAddressSecret() ([]byte, error) {

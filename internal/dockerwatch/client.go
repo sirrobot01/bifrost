@@ -24,6 +24,7 @@ type ClientConfig struct {
 	Socket     string
 	HTTPClient *http.Client
 	BaseURL    string
+	DialSocket func(context.Context, string) (net.Conn, error)
 }
 
 type Client struct {
@@ -52,10 +53,16 @@ func NewClient(config ClientConfig) (*Client, error) {
 		if config.Socket == "" {
 			return nil, errors.New("docker socket is required")
 		}
-		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		dialSocket := config.DialSocket
+		if dialSocket == nil {
+			dialer := &net.Dialer{Timeout: 5 * time.Second}
+			dialSocket = func(ctx context.Context, socket string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "unix", socket)
+			}
+		}
 		transport := &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", config.Socket)
+				return dialSocket(ctx, config.Socket)
 			},
 			DisableCompression: true,
 			MaxIdleConns:       2,

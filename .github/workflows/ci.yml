@@ -31,6 +31,8 @@ jobs:
       - run: CGO_ENABLED=0 GOOS=freebsd GOARCH=arm64 go build -trimpath -o /tmp/bifrost-freebsd-arm64 ./cmd/bifrost
       - run: CGO_ENABLED=0 GOOS=openbsd GOARCH=amd64 go build -trimpath -o /tmp/bifrost-openbsd-amd64 ./cmd/bifrost
       - run: CGO_ENABLED=0 GOOS=openbsd GOARCH=arm64 go build -trimpath -o /tmp/bifrost-openbsd-arm64 ./cmd/bifrost
+      - run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/bifrost-windows-amd64.exe ./cmd/bifrost
+      - run: CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -o /tmp/bifrost-windows-arm64.exe ./cmd/bifrost
       - run: docker build --build-arg VERSION=ci .
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -113,3 +115,21 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build -trimpath -o "$env:TEMP/bifrost-windows-amd64.exe" ./cmd/bifrost
+      - shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [Management.Automation.Language.Parser]::ParseFile("$PWD/docs/public/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }

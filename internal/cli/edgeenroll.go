@@ -8,9 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 
 	"github.com/sirrobot01/bifrost/internal/config"
 	"github.com/sirrobot01/bifrost/internal/edge"
@@ -32,7 +30,7 @@ const edgeKeyBytes = 32
 func (r Runner) runEdgeInvite(arguments []string) error {
 	flags := flag.NewFlagSet("edge invite", flag.ContinueOnError)
 	flags.SetOutput(r.Stderr)
-	configPath := flags.String("config", "/etc/bifrost/config.yaml", "home config file")
+	configPath := flags.String("config", filepath.Join(defaultConfigDir, "config.yaml"), "home config file")
 	address := flags.String("address", "", "public IPv4 address of the edge host")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -71,7 +69,7 @@ func (r Runner) runEdgeInvite(arguments []string) error {
 	} else {
 		_, _ = fmt.Fprintf(r.Stdout, "Reusing the existing edge key at %s.\n", keyPath)
 	}
-	_, _ = fmt.Fprintf(r.Stdout, "\nRun this on the edge host:\n\n  sudo bifrost edge join %s\n", token)
+	_, _ = fmt.Fprintf(r.Stdout, "\nRun this on the edge host:\n\n  %s\n", elevatedCommand("bifrost edge join "+token))
 	_, _ = fmt.Fprint(r.Stdout, "\nThe token contains the shared key. Treat it as a secret and send it over a private channel.\n")
 
 	_, _ = fmt.Fprintf(r.Stdout, "\nThen add this to %s and restart bifrost:\n\n", *configPath)
@@ -164,38 +162,6 @@ func ensureEdgeKey(path string) (string, bool, error) {
 		return "", false, err
 	}
 	return key, true, nil
-}
-
-// applyAccountOwnership hands created files to a service account when running
-// as root. A missing account is not an error: the operator may run the daemon
-// under a different user.
-func applyAccountOwnership(account, configDir string, files []pendingFile) error {
-	if os.Geteuid() != 0 {
-		return nil
-	}
-	entry, err := user.Lookup(account)
-	if err != nil {
-		return nil
-	}
-	uid, err := strconv.Atoi(entry.Uid)
-	if err != nil {
-		return nil
-	}
-	gid, err := strconv.Atoi(entry.Gid)
-	if err != nil {
-		return nil
-	}
-	for _, file := range files {
-		if err := os.Chown(file.path, uid, gid); err != nil {
-			return fmt.Errorf("set ownership of %s: %w", file.path, err)
-		}
-	}
-	// The directory stays traversable by other roles: both the home and edge
-	// accounts read configuration from it on a combined host.
-	if err := os.Chmod(configDir, 0o755); err != nil {
-		return fmt.Errorf("set mode of %s: %w", configDir, err)
-	}
-	return nil
 }
 
 func startEdgeService() error {

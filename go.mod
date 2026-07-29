@@ -3,6 +3,7 @@ module github.com/sirrobot01/bifrost
 go 1.26.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/google/nftables v0.3.0
 	github.com/miekg/dns v1.1.72
 	github.com/vishvananda/netlink v1.3.1

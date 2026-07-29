@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if config.SettleWindow.Duration() != 10*time.Second || config.DrainGrace.Duration() != 2*time.Minute {
 		t.Fatalf("durations = %s, %s", config.SettleWindow.Duration(), config.DrainGrace.Duration())
 	}
-	if config.Docker.Socket != "/var/run/docker.sock" {
+	if config.Docker.Socket != defaultDockerSocket() {
 		t.Fatalf("Docker socket = %q", config.Docker.Socket)
 	}
 }
@@ -107,6 +108,9 @@ func TestDecodeRejectsDirectEdgeService(t *testing.T) {
 
 func TestReadSecretRejectsBroadPermissions(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows access-control lists are covered by the platform test")
+	}
 
 	path := filepath.Join(t.TempDir(), "secret")
 	if err := os.WriteFile(path, []byte("secret"), 0o644); err != nil {
@@ -156,7 +160,7 @@ static_services:
 	if configFile.OwnerID == "" {
 		t.Fatal("owner_id was not derived")
 	}
-	if configFile.SecretFile != "/etc/bifrost/address-secret" {
+	if configFile.SecretFile != filepath.Join(defaultConfigDirectory(), "address-secret") {
 		t.Fatalf("secret_file = %q", configFile.SecretFile)
 	}
 	// Defaults must not silently override what the operator did state.

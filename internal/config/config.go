@@ -15,9 +15,6 @@ import (
 
 const CurrentVersion = 1
 
-// defaultConfigDir holds the configuration and its secrets.
-const defaultConfigDir = "/etc/bifrost"
-
 // defaultOwnerID marks DNS records as belonging to this host. The hostname is
 // stable, unique on a normal network, and already meaningful to the operator,
 // so it beats asking for a name that has no other use.
@@ -239,7 +236,7 @@ func (c *Config) ApplyDefaults() {
 		c.OwnerID = defaultOwnerID()
 	}
 	if c.SecretFile == "" {
-		c.SecretFile = filepath.Join(defaultConfigDir, "address-secret")
+		c.SecretFile = filepath.Join(defaultConfigDirectory(), "address-secret")
 	}
 	if c.SettleWindow == 0 {
 		c.SettleWindow = Duration(10 * time.Second)
@@ -257,7 +254,7 @@ func (c *Config) ApplyDefaults() {
 		c.Metrics.Listen = "127.0.0.1:9098"
 	}
 	if c.Docker.Socket == "" {
-		c.Docker.Socket = "/var/run/docker.sock"
+		c.Docker.Socket = defaultDockerSocket()
 	}
 	if c.Verify.Interval == 0 {
 		// Slow on purpose. This detects an outage; it is not a health check in
@@ -298,7 +295,7 @@ func (c *Config) ApplyDefaults() {
 		}
 	}
 	if c.ACME.StateDir == "" {
-		c.ACME.StateDir = "/var/lib/bifrost"
+		c.ACME.StateDir = defaultStateDirectory()
 	}
 }
 
@@ -559,8 +556,8 @@ func ReadSecret(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("secret path is not a regular file")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("secret file permissions %04o allow group or other access", info.Mode().Perm())
+	if err := secretPermissions(path, info); err != nil {
+		return nil, err
 	}
 	if info.Size() > 64<<10 {
 		return nil, errors.New("secret file exceeds 64 KiB")

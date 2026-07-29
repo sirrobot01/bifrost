@@ -43,7 +43,7 @@ func TestRunnerUpgradeCheckReportsANewerRelease(t *testing.T) {
 	if code := runner.Run(t.Context(), []string{"upgrade", "--check", "--base-url", server.URL}); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, expected := range []string{"installed 0.5.3", "latest 0.9.9", "sudo bifrost upgrade"} {
+	for _, expected := range []string{"installed 0.5.3", "latest 0.9.9", elevatedCommand("bifrost upgrade")} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("stdout does not mention %q:\n%s", expected, stdout.String())
 		}
@@ -61,7 +61,7 @@ func TestRunnerUpgradeCheckIsQuietWhenCurrent(t *testing.T) {
 	if code := runner.Run(t.Context(), []string{"upgrade", "--check", "--base-url", server.URL}); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
 	}
-	if strings.Contains(stdout.String(), "sudo bifrost upgrade") {
+	if strings.Contains(stdout.String(), elevatedCommand("bifrost upgrade")) {
 		t.Fatalf("a current host was told to upgrade:\n%s", stdout.String())
 	}
 }
