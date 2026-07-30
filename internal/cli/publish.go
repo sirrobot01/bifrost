@@ -21,12 +21,18 @@ func (r Runner) runPublish(ctx context.Context, arguments []string) error {
 	name := flags.String("name", "", "service ID (default: the first label of the DNS name)")
 	listen := flags.Uint("listen", 443, "public TCP port")
 	tls := flags.String("tls", "auto", "auto to terminate TLS, off for a backend that speaks TLS itself")
-	edge := flags.Bool("edge", false, "also publish through the configured IPv4 edge")
+	edge := flags.Bool("edge", false, "publish through the configured IPv4 edge (default: edge.enabled)")
 	dryRun := flags.Bool("dry-run", false, "print the service block without writing it")
 	noReload := flags.Bool("no-reload", false, "do not reload the running daemon")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
+	edgeSet := false
+	flags.Visit(func(option *flag.Flag) {
+		if option.Name == "edge" {
+			edgeSet = true
+		}
+	})
 	if flags.NArg() != 2 {
 		return errors.New("usage: bifrost publish <dns-name> <backend-address:port>")
 	}
@@ -41,17 +47,6 @@ func (r Runner) runPublish(ctx context.Context, arguments []string) error {
 	if *tls != "auto" && *tls != "off" {
 		return errors.New("tls must be auto or off")
 	}
-	service := config.StaticService{
-		Name:    cmpOr(*name, serviceNameFromDNS(dnsName)),
-		Backend: backend,
-		Listen:  uint16(*listen),
-		DNSName: dnsName,
-		Edge:    *edge,
-	}
-	if *tls == "off" {
-		service.TLS = "off"
-	}
-
 	original, err := os.ReadFile(*configPath)
 	if err != nil {
 		return err
@@ -59,6 +54,20 @@ func (r Runner) runPublish(ctx context.Context, arguments []string) error {
 	current, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+	publishThroughEdge := current.Edge.Enabled
+	if edgeSet {
+		publishThroughEdge = *edge
+	}
+	service := config.StaticService{
+		Name:          cmpOr(*name, serviceNameFromDNS(dnsName)),
+		Backend:       backend,
+		Listen:        uint16(*listen),
+		DNSName:       dnsName,
+		Mode:          "splice",
+		TLS:           *tls,
+		ProxyProtocol: false,
+		Edge:          publishThroughEdge,
 	}
 	for _, existing := range current.StaticServices {
 		if existing.Name == service.Name {
@@ -104,12 +113,10 @@ func serviceBlock(service config.StaticService) string {
 	fmt.Fprintf(&block, "    backend: %s\n", service.Backend)
 	fmt.Fprintf(&block, "    listen: %d\n", service.Listen)
 	fmt.Fprintf(&block, "    dns: %s\n", service.DNSName)
-	if service.TLS != "" {
-		fmt.Fprintf(&block, "    tls: %s\n", service.TLS)
-	}
-	if service.Edge {
-		block.WriteString("    edge: true\n")
-	}
+	fmt.Fprintf(&block, "    mode: %s\n", service.Mode)
+	fmt.Fprintf(&block, "    tls: %s\n", service.TLS)
+	fmt.Fprintf(&block, "    proxy_protocol: %t\n", service.ProxyProtocol)
+	fmt.Fprintf(&block, "    edge: %t\n", service.Edge)
 	return block.String()
 }
 

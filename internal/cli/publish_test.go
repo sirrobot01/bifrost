@@ -73,8 +73,13 @@ func TestPublishAddsAServiceAndKeepsTheRestOfTheFile(t *testing.T) {
 		t.Fatalf("services = %+v", loaded.StaticServices)
 	}
 	added := loaded.StaticServices[1]
-	if added.Name != "photos" || added.DNSName != "photos.example.com" || added.Backend != "127.0.0.1:2283" || added.Listen != 443 {
+	if added.Name != "photos" || added.DNSName != "photos.example.com" || added.Backend != "127.0.0.1:2283" || added.Listen != 443 || added.Mode != "splice" || added.TLS != "auto" || added.ProxyProtocol || added.Edge {
 		t.Fatalf("added = %+v", added)
+	}
+	for _, field := range []string{"mode: splice", "tls: auto", "proxy_protocol: false", "edge: false"} {
+		if !strings.Contains(string(written), field) {
+			t.Fatalf("the service block does not contain %q:\n%s", field, written)
+		}
 	}
 	// The service has to land inside static_services, not after the next key.
 	if strings.Index(string(written), "photos.example.com") > strings.Index(string(written), "metrics:") {
@@ -103,7 +108,7 @@ func TestPublishFillsAnEmptyServiceList(t *testing.T) {
 	}
 }
 
-func TestPublishHonoursTLSAndEdgeFlags(t *testing.T) {
+func TestPublishHonoursTLSFlag(t *testing.T) {
 	t.Parallel()
 
 	path := publishConfig(t, publishBase)
@@ -117,6 +122,50 @@ func TestPublishHonoursTLSAndEdgeFlags(t *testing.T) {
 	added := loaded.StaticServices[1]
 	if added.Name != "plexserver" || added.TLS != "off" || added.Listen != 32400 {
 		t.Fatalf("added = %+v", added)
+	}
+}
+
+func TestPublishUsesConfiguredEdgeByDefault(t *testing.T) {
+	t.Parallel()
+
+	withEdge := strings.Replace(publishBase, "# Services published from this host.", `edge:
+  enabled: true
+  ipv4_address: 192.0.2.10
+  key_file: /etc/bifrost/edge-key
+
+# Services published from this host.`, 1)
+	path := publishConfig(t, withEdge)
+	if _, stderr, code := runPublish(t, "--config", path, "--no-reload", "photos.example.com", "127.0.0.1:2283"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added := loaded.StaticServices[1]; added.Mode != "splice" || added.TLS != "auto" || added.ProxyProtocol || !added.Edge {
+		t.Fatalf("added = %+v", added)
+	}
+}
+
+func TestPublishCanOptOutOfConfiguredEdge(t *testing.T) {
+	t.Parallel()
+
+	withEdge := strings.Replace(publishBase, "# Services published from this host.", `edge:
+  enabled: true
+  ipv4_address: 192.0.2.10
+  key_file: /etc/bifrost/edge-key
+
+# Services published from this host.`, 1)
+	path := publishConfig(t, withEdge)
+	if _, stderr, code := runPublish(t, "--config", path, "--no-reload", "--edge=false", "photos.example.com", "127.0.0.1:2283"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StaticServices[1].Edge {
+		t.Fatalf("added = %+v", loaded.StaticServices[1])
 	}
 }
 

@@ -356,14 +356,26 @@ Each `allow` entry must be a DNS name. Each static map target must contain a DNS
 sudo bifrost publish photos.example.com 127.0.0.1:2283
 ```
 
-This appends the service to `/etc/bifrost/config.yaml` and reloads the daemon. The service name comes from the first label, the public port defaults to 443, and TLS is terminated by Bifrost.
+This appends a complete splice service to `/etc/bifrost/config.yaml` and reloads the daemon. The service name comes from the first label, the public port defaults to 443, TLS is terminated by Bifrost, and PROXY protocol stays off. When the global `edge.enabled` setting is true, the new service is published through that edge automatically.
+
+```yaml
+  - name: photos
+    backend: 127.0.0.1:2283
+    listen: 443
+    dns: photos.example.com
+    mode: splice
+    tls: auto
+    proxy_protocol: false
+    edge: true
+```
 
 | Flag | Purpose |
 |---|---|
 | `--name` | Service ID, when the first label is not what you want. |
 | `--listen` | Public TCP port. |
 | `--tls off` | Pass raw TCP to a backend that speaks TLS itself. |
-| `--edge` | Also publish through the configured IPv4 edge. |
+| `--edge=true` | Explicitly publish through the configured IPv4 edge; `edge.enabled` must be true. |
+| `--edge=false` | Keep this service off a configured edge. |
 | `--dry-run` | Print the block without writing it. |
 | `--no-reload` | Write the file and leave the daemon alone. |
 
